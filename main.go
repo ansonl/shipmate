@@ -200,6 +200,12 @@ func getPickupInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func getPickupList(w http.ResponseWriter, r *http.Request) {
+	//check passphrase in "phrase" parameter
+	if !isPhraseCorrect(r.Form) {
+		fmt.Fprintf(w, failResponse)
+		return
+	}
+
 	if output, err := json.Marshal(pickups); err == nil {
 		fmt.Fprintf(w, string(output[:]))
 	} else {
@@ -214,6 +220,7 @@ func confirmPickup(w http.ResponseWriter, r *http.Request) {
 	//parse http parameters
 	r.ParseForm()
 
+	//check passphrase in "phrase" parameter
 	if !isPhraseCorrect(r.Form) {
 		fmt.Fprintf(w, failResponse)
 		return
@@ -242,6 +249,12 @@ func completePickup(w http.ResponseWriter, r *http.Request) {
 	//parse http parameters
 	r.ParseForm()
 
+	//check passphrase in "phrase" parameter
+	if !isPhraseCorrect(r.Form) {
+		fmt.Fprintf(w, failResponse)
+		return
+	}
+
 	if !doKeysExist(r.Form, []string{"phoneNumber"}) && areFieldsEmpty(r.Form ,[]string{"phoneNumber"}) {
 		log.Fatal("required http parameters not found for completePickup")
 	}
@@ -262,6 +275,12 @@ func updateVanLocation(w http.ResponseWriter, r *http.Request) {
 
 	//parse http parameters
 	r.ParseForm()
+
+	//check passphrase in "phrase" parameter
+	if !isPhraseCorrect(r.Form) {
+		fmt.Fprintf(w, failResponse)
+		return
+	}
 
 	if !doKeysExist(r.Form, []string{"vanNumber", "latitude", "longitude"}) && areFieldsEmpty(r.Form ,[]string{"vanNumber", "latitude", "longitude"}) {
 		log.Fatal("required http parameters not found for getPickupInfo")
