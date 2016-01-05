@@ -10,6 +10,7 @@ import (
 	"log"
 	"sync"
 	"strconv"
+	"crypto/md5"
 )
 
 type Location struct {
@@ -40,12 +41,30 @@ var vanLocations []Location
 
 var startTime = time.Now()
 
+var successResponse string
+var failResponse string
+
+func generateSuccessResponse(targetString *string) {
+	tmp, err := json.Marshal(map[string]string{"status":"success"})
+	*targetString = string(tmp)
+	if  err != nil {
+		fmt.Printf("Generating success response failed. %v", err)
+	}
+}
+
+func generateFailResponse(targetString *string) {
+	tmp, err := json.Marshal(map[string]string{"status":"fail"})
+	*targetString = string(tmp)
+	if  err != nil {
+		fmt.Printf("Generating fail response failed. %v", err)
+	}
+}
+
 func aboutHandler(w http.ResponseWriter, r *http.Request) {
     //bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	
-	http.Redirect(w, r, "https://github.com/ansonl/menuformatter", http.StatusFound)
-	fmt.Println("About requested")
+	http.Redirect(w, r, "https://github.com/ansonl/shipmate", http.StatusFound)
 }
 
 func doKeysExist(targetDictionary url.Values, targetKeys []string) bool {
@@ -71,6 +90,27 @@ func isFieldEmpty(field string) bool {
 		return false
 	}
 	return true
+}
+
+func checkMD5(password []byte) bool {
+	digest := fmt.Sprintf("%x", md5.Sum(password))
+	if digest == "34d1f8a7e29f3f3497ec05d0c9c8e4fc" {
+		return true
+	}
+	return false
+}
+
+func isPhraseCorrect(targetDictionary url.Values) bool {
+	if doKeysExist(targetDictionary, []string{"phrase"}) && !areFieldsEmpty(targetDictionary ,[]string{"phrase"}) {
+		if checkMD5([]byte(targetDictionary["phrase"][0])) {
+			return true
+		} else {
+			fmt.Println("Wrong phrase \"" + targetDictionary["phrase"][0] + "\" received")
+		}
+	} else {
+		fmt.Println("No phrase HTTP parameter received.")
+	}
+	return false
 }
 
 func uptimeHandler(w http.ResponseWriter, r *http.Request) {
@@ -174,6 +214,11 @@ func confirmPickup(w http.ResponseWriter, r *http.Request) {
 	//parse http parameters
 	r.ParseForm()
 
+	if !isPhraseCorrect(r.Form) {
+		fmt.Fprintf(w, failResponse)
+		return
+	}
+
 	if !doKeysExist(r.Form, []string{"phoneNumber"}) && areFieldsEmpty(r.Form ,[]string{"phoneNumber"}) {
 		log.Fatal("required http parameters not found for confirmPickup")
 	}
@@ -186,6 +231,8 @@ func confirmPickup(w http.ResponseWriter, r *http.Request) {
 	tmp.Status = confirmed
 	tmp.ConfirmTime = time.Now()
 	pickups[number] = tmp
+
+	fmt.Fprintf(w, successResponse)
 }
 
 func completePickup(w http.ResponseWriter, r *http.Request) {
@@ -297,6 +344,8 @@ func main() {
 
 	pickups = make(map[string]Pickup)
 	vanLocations = make([]Location, 0)
+	generateSuccessResponse(&successResponse)
+	generateFailResponse(&failResponse)
 
 	t := time.NewTicker(30 * time.Second)
 
