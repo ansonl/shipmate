@@ -200,6 +200,12 @@ func getPickupInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func getPickupList(w http.ResponseWriter, r *http.Request) {
+	//bypass same origin policy
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	//parse http parameters
+	r.ParseForm()
+	
 	//check passphrase in "phrase" parameter
 	if !isPhraseCorrect(r.Form) {
 		fmt.Fprintf(w, failResponse)
@@ -267,6 +273,8 @@ func completePickup(w http.ResponseWriter, r *http.Request) {
 	tmp.Status = completed
 	tmp.CompleteTime = time.Now()
 	pickups[number] = tmp
+
+	fmt.Fprintf(w, successResponse)
 }
 
 func updateVanLocation(w http.ResponseWriter, r *http.Request) {
@@ -377,7 +385,7 @@ func main() {
 
 	for now := range t.C {
 		now = now
-		go removeInactive(&pickups, time.Duration(15) * time.Second)
+		//go removeInactive(&pickups, time.Duration(15) * time.Second)
 	}
 
 	wg.Wait()
