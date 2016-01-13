@@ -33,6 +33,7 @@ type Pickup struct {
 	Status int `json:"status"`
 	ConfirmTime time.Time `json:"confirmTime"`
 	CompleteTime time.Time `json:"completeTime"`
+	devicePhrase string
 }
 
 var pickups map[string]Pickup
@@ -45,7 +46,7 @@ var successResponse string
 var failResponse string
 
 func generateSuccessResponse(targetString *string) {
-	tmp, err := json.Marshal(map[string]string{"status":"success"})
+	tmp, err := json.Marshal(map[string]string{"status":"0"})
 	*targetString = string(tmp)
 	if  err != nil {
 		fmt.Printf("Generating success response failed. %v", err)
@@ -53,7 +54,7 @@ func generateSuccessResponse(targetString *string) {
 }
 
 func generateFailResponse(targetString *string) {
-	tmp, err := json.Marshal(map[string]string{"status":"fail"})
+	tmp, err := json.Marshal(map[string]string{"status":"-1"})
 	*targetString = string(tmp)
 	if  err != nil {
 		fmt.Printf("Generating fail response failed. %v", err)
@@ -100,12 +101,12 @@ func checkMD5(password []byte) bool {
 	return false
 }
 
-func isPhraseCorrect(targetDictionary url.Values) bool {
+func isDriverPhraseCorrect(targetDictionary url.Values) bool {
 	if doKeysExist(targetDictionary, []string{"phrase"}) && !areFieldsEmpty(targetDictionary ,[]string{"phrase"}) {
 		if checkMD5([]byte(targetDictionary["phrase"][0])) {
 			return true
 		} else {
-			fmt.Println("Wrong phrase \"" + targetDictionary["phrase"][0] + "\" received")
+			//fmt.Println("Wrong driver phrase \"" + targetDictionary["phrase"][0] + "\" received")
 		}
 	} else {
 		fmt.Println("No phrase HTTP parameter received.")
@@ -129,11 +130,11 @@ func newPickup(w http.ResponseWriter, r *http.Request) {
 
 	r.ParseForm()
 
-	if !doKeysExist(r.Form, []string{"phoneNumber", "latitude", "longitude"}) && areFieldsEmpty(r.Form ,[]string{"phoneNumber", "latitude", "longitude"}) {
+	if !doKeysExist(r.Form, []string{"phoneNumber", "latitude", "longitude", "phrase"}) && areFieldsEmpty(r.Form ,[]string{"phoneNumber", "latitude", "longitude", "phrase"}) {
 		log.Fatal("required http parameters not found for newPickup")
 	}
 
-	var number string
+	var number, devicePhrase string
 	var location Location
 
 	/*
@@ -144,6 +145,7 @@ func newPickup(w http.ResponseWriter, r *http.Request) {
 	*/
 
 	number = r.Form["phoneNumber"][0]
+	devicePhrase = r.Form["phrase"][0]
 
 	lat, err := strconv.ParseFloat(r.Form["latitude"][0], 64);
 	lon, err := strconv.ParseFloat(r.Form["longitude"][0], 64);
@@ -153,8 +155,15 @@ func newPickup(w http.ResponseWriter, r *http.Request) {
 	} else {
 		location = Location{Latitude: lat, Longitude: lon}
 	}
-	
-	tmp := Pickup{number, location, time.Now(), location, time.Now(), pending, time.Time{}, time.Time{}}
+
+	//if someone else if already using that number and devicePhrase does not match, maybe the user reinstalled the app
+	//we want to allow the same device to continue using the phoneNumber if the app relaunched
+	if pickups[number].Status != 0 && pickups[number].devicePhrase != devicePhrase {
+		fmt.Fprintf(w, failResponse)
+		return
+	}
+
+	tmp := Pickup{number, location, time.Now(), location, time.Now(), pending, time.Time{}, time.Time{}, devicePhrase}
 
 	pickups[number] = tmp
 
@@ -172,7 +181,7 @@ func getPickupInfo(w http.ResponseWriter, r *http.Request) {
 	//parse http parameters
 	r.ParseForm()
 
-	if !doKeysExist(r.Form, []string{"phoneNumber", "latitude", "longitude"}) && areFieldsEmpty(r.Form ,[]string{"phoneNumber", "latitude", "longitude"}) {
+	if !doKeysExist(r.Form, []string{"phoneNumber", "latitude", "longitude", "phrase"}) && areFieldsEmpty(r.Form ,[]string{"phoneNumber", "latitude", "longitude", "phrase"}) {
 		log.Fatal("required http parameters not found for getPickupInfo")
 	}
 
@@ -180,6 +189,14 @@ func getPickupInfo(w http.ResponseWriter, r *http.Request) {
 	var location Location
 
 	number = r.Form["phoneNumber"][0]
+
+	//check passphrase in "phrase" parameter
+	if !isDriverPhraseCorrect(r.Form) {
+		if r.Form["phrase"][0] != pickups[number].devicePhrase {
+			fmt.Fprintf(w, failResponse)
+			return
+		}
+	}
 
 	if lat, err := strconv.ParseFloat(r.Form["latitude"][0], 64); err == nil {
 		if lon, err := strconv.ParseFloat(r.Form["longitude"][0], 64); err == nil {
@@ -205,9 +222,9 @@ func getPickupList(w http.ResponseWriter, r *http.Request) {
 
 	//parse http parameters
 	r.ParseForm()
-	
+
 	//check passphrase in "phrase" parameter
-	if !isPhraseCorrect(r.Form) {
+	if !isDriverPhraseCorrect(r.Form) {
 		fmt.Fprintf(w, failResponse)
 		return
 	}
@@ -227,7 +244,7 @@ func confirmPickup(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 
 	//check passphrase in "phrase" parameter
-	if !isPhraseCorrect(r.Form) {
+	if !isDriverPhraseCorrect(r.Form) {
 		fmt.Fprintf(w, failResponse)
 		return
 	}
@@ -256,7 +273,7 @@ func completePickup(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 
 	//check passphrase in "phrase" parameter
-	if !isPhraseCorrect(r.Form) {
+	if !isDriverPhraseCorrect(r.Form) {
 		fmt.Fprintf(w, failResponse)
 		return
 	}
@@ -285,7 +302,7 @@ func updateVanLocation(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 
 	//check passphrase in "phrase" parameter
-	if !isPhraseCorrect(r.Form) {
+	if !isDriverPhraseCorrect(r.Form) {
 		fmt.Fprintf(w, failResponse)
 		return
 	}
@@ -334,6 +351,38 @@ func updateVanLocation(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func cancelPickup(w http.ResponseWriter, r *http.Request) {
+    //bypass same origin policy
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	//parse http parameters
+	r.ParseForm()
+
+	if !doKeysExist(r.Form, []string{"phoneNumber", "phrase"}) && areFieldsEmpty(r.Form ,[]string{"phoneNumber", "phrase"}) {
+		log.Fatal("required http parameters not found for getPickupInfo")
+	}
+
+	var number string
+
+	number = r.Form["phoneNumber"][0]
+
+	//check passphrase in "phrase" parameter
+	if !isDriverPhraseCorrect(r.Form) {
+		if r.Form["phrase"][0] != pickups[number].devicePhrase {
+			fmt.Fprintf(w, failResponse)
+			return
+		}
+	}
+
+	var tmp = pickups[number]
+	tmp.Status = inactive
+	tmp.LatestTime = time.Now()
+	tmp.devicePhrase = ""
+	pickups[number] = tmp
+
+	fmt.Fprintf(w, successResponse);
+}
+
 func server(wg *sync.WaitGroup) {
 	http.HandleFunc("/", uptimeHandler)
 
@@ -346,6 +395,9 @@ func server(wg *sync.WaitGroup) {
 	http.HandleFunc("/confirmPickup", confirmPickup)
 	http.HandleFunc("/completePickup", completePickup)
 	http.HandleFunc("/updateVanLocation", updateVanLocation)
+
+	//shared functions
+	http.HandleFunc("/cancelPickup", cancelPickup)
 
 	
 	//http.ListenAndServe(":8080", nil)
@@ -362,6 +414,7 @@ func removeInactive(targetMap *map[string]Pickup, timeDifference time.Duration) 
 		if time.Since(v.LatestTime) > timeDifference {
 			//delete(*targetMap, k)
 			v.Status = inactive
+			v.devicePhrase = ""
 			(*targetMap)[k] = v
 		}
 	}
