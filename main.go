@@ -16,6 +16,7 @@ import (
 type Location struct {
 	Latitude float64 `json:"latitude"`
 	Longitude float64 `json:"longitude"`
+	Heading float64 `json:"heading"`
 }
 
 //Status int constants
@@ -216,6 +217,18 @@ func getPickupInfo(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func getVanLocations(w http.ResponseWriter, r *http.Request) {
+	//bypass same origin policy
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	//reply with all van locations on server
+	if output, err := json.Marshal(vanLocations); err == nil {
+		fmt.Fprintf(w, string(output[:]))
+	} else {
+		log.Fatal(err)
+	}
+}
+
 func getPickupList(w http.ResponseWriter, r *http.Request) {
 	//bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -337,6 +350,17 @@ func updateVanLocation(w http.ResponseWriter, r *http.Request) {
 		location = Location{Latitude: lat, Longitude: lon}
 	}
 
+	if doKeysExist(r.Form, []string{"heading"}) && !areFieldsEmpty(r.Form ,[]string{"heading"}) {
+		heading, err := strconv.ParseFloat(r.Form["heading"][0], 64);
+		if err != nil {
+			log.Fatal(err)
+		} else {
+			location.Heading = heading
+		}
+	} else {
+		location.Heading = -1
+	}
+
 	for len(vanLocations) < vanNumber {
 		vanLocations = append(vanLocations, Location{})
 	}
@@ -389,6 +413,7 @@ func server(wg *sync.WaitGroup) {
 	//pickupee functions
 	http.HandleFunc("/newPickup", newPickup)
 	http.HandleFunc("/getPickupInfo", getPickupInfo)
+	http.HandleFunc("/getVanLocations", getVanLocations)
 
 	//driver functions
 	http.HandleFunc("/getPickupList", getPickupList)
