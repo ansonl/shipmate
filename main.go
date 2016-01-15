@@ -460,13 +460,17 @@ func removeInactiveVanLocations(targetArray []Location, timeDifference time.Dura
 	var numberOfEmptyLocations int
 
 	for i := 0; i < len(targetArray); i++ {
-		fmt.Println(time.Since((targetArray)[i].latestTime))
+		
 		if (targetArray[i].latestTime != time.Time{} && time.Since((targetArray)[i].latestTime) > timeDifference) {
+			fmt.Println(time.Since((targetArray)[i].latestTime))
+			fmt.Println(timeDifference)
+
 			targetArray[i].Latitude = 0
 			targetArray[i].Longitude = 0
 			targetArray[i].latestTime = time.Time{}
 			numberOfEmptyLocations++
-		} else {
+
+		} else if (targetArray[i].latestTime == time.Time{}) {
 			numberOfEmptyLocations++
 		}
 	}
