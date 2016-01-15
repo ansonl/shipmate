@@ -114,6 +114,8 @@ func aboutHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	
 	http.Redirect(w, r, "https://github.com/ansonl/shipmate", http.StatusFound)
+
+	fmt.Println("About requested")
 }
 
 func uptimeHandler(w http.ResponseWriter, r *http.Request) {
@@ -125,8 +127,6 @@ func uptimeHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Uptime:\t%v\nPickups total:\t%v\nVans total:\t%v", diff.String(), len(pickups), len(vanLocations))
 
 	fmt.Println("Uptime requested")
-
-
 }
 
 func newPickup(w http.ResponseWriter, r *http.Request) {
