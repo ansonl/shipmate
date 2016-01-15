@@ -63,13 +63,6 @@ func generateFailResponse(targetString *string) {
 	}
 }
 
-func aboutHandler(w http.ResponseWriter, r *http.Request) {
-    //bypass same origin policy
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	
-	http.Redirect(w, r, "https://github.com/ansonl/shipmate", http.StatusFound)
-}
-
 func doKeysExist(targetDictionary url.Values, targetKeys []string) bool {
 	for _, v := range targetKeys {
 		if _, exists := targetDictionary[v]; !exists {
@@ -116,14 +109,24 @@ func isDriverPhraseCorrect(targetDictionary url.Values) bool {
 	return false
 }
 
+func aboutHandler(w http.ResponseWriter, r *http.Request) {
+    //bypass same origin policy
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	
+	http.Redirect(w, r, "https://github.com/ansonl/shipmate", http.StatusFound)
+}
+
 func uptimeHandler(w http.ResponseWriter, r *http.Request) {
     //bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	
 	diff := time.Since(startTime)
 
-	fmt.Fprintf(w, "" + "Uptime:\t" + diff.String())
+	fmt.Fprintf(w, "Uptime:\t%v\nPickups total:\t%v\nVans total:\t%v", diff.String(), len(pickups), len(vanLocations))
+
 	fmt.Println("Uptime requested")
+
+
 }
 
 func newPickup(w http.ResponseWriter, r *http.Request) {
@@ -234,6 +237,38 @@ func getVanLocations(w http.ResponseWriter, r *http.Request) {
 	} else {
 		log.Fatal(err)
 	}
+}
+
+func cancelPickup(w http.ResponseWriter, r *http.Request) {
+    //bypass same origin policy
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	//parse http parameters
+	r.ParseForm()
+
+	if !doKeysExist(r.Form, []string{"phoneNumber", "phrase"}) && areFieldsEmpty(r.Form ,[]string{"phoneNumber", "phrase"}) {
+		log.Fatal("required http parameters not found for getPickupInfo")
+	}
+
+	var number string
+
+	number = r.Form["phoneNumber"][0]
+
+	//check passphrase in "phrase" parameter
+	if !isDriverPhraseCorrect(r.Form) {
+		if r.Form["phrase"][0] != pickups[number].devicePhrase {
+			fmt.Fprintf(w, failResponse)
+			return
+		}
+	}
+
+	var tmp = pickups[number]
+	tmp.Status = inactive
+	tmp.LatestTime = time.Now()
+	tmp.devicePhrase = ""
+	pickups[number] = tmp
+
+	fmt.Fprintf(w, successResponse);
 }
 
 func getPickupList(w http.ResponseWriter, r *http.Request) {
@@ -384,45 +419,18 @@ func updateVanLocation(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func cancelPickup(w http.ResponseWriter, r *http.Request) {
-    //bypass same origin policy
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	//parse http parameters
-	r.ParseForm()
-
-	if !doKeysExist(r.Form, []string{"phoneNumber", "phrase"}) && areFieldsEmpty(r.Form ,[]string{"phoneNumber", "phrase"}) {
-		log.Fatal("required http parameters not found for getPickupInfo")
-	}
-
-	var number string
-
-	number = r.Form["phoneNumber"][0]
-
-	//check passphrase in "phrase" parameter
-	if !isDriverPhraseCorrect(r.Form) {
-		if r.Form["phrase"][0] != pickups[number].devicePhrase {
-			fmt.Fprintf(w, failResponse)
-			return
-		}
-	}
-
-	var tmp = pickups[number]
-	tmp.Status = inactive
-	tmp.LatestTime = time.Now()
-	tmp.devicePhrase = ""
-	pickups[number] = tmp
-
-	fmt.Fprintf(w, successResponse);
-}
-
 func server(wg *sync.WaitGroup) {
-	http.HandleFunc("/", uptimeHandler)
+	//general functions
+	http.HandleFunc("/", aboutHandler)
+	http.HandleFunc("/uptime", uptimeHandler)
 
 	//pickupee functions
 	http.HandleFunc("/newPickup", newPickup)
 	http.HandleFunc("/getPickupInfo", getPickupInfo)
 	http.HandleFunc("/getVanLocations", getVanLocations)
+
+	//shared functions
+	http.HandleFunc("/cancelPickup", cancelPickup)
 
 	//driver functions
 	http.HandleFunc("/getPickupList", getPickupList)
@@ -430,19 +438,14 @@ func server(wg *sync.WaitGroup) {
 	http.HandleFunc("/completePickup", completePickup)
 	http.HandleFunc("/updateVanLocation", updateVanLocation)
 
-	//shared functions
-	http.HandleFunc("/cancelPickup", cancelPickup)
+	//bind to $PORT environment variable
+  err := http.ListenAndServe(":"+os.Getenv("PORT"), nil) 
+  fmt.Println("Listening on " + os.Getenv("PORT"))
+  if err != nil {
+    log.Fatal(err)
+  } 
 
-	
-	//http.ListenAndServe(":8080", nil)
-    
-    err := http.ListenAndServe(":"+os.Getenv("PORT"), nil) 
-    fmt.Println("Listening on " + os.Getenv("PORT"))
-    if err != nil {
-      log.Fatal(err)
-    } 
-
-    wg.Done()
+  wg.Done()
 }
 
 func removeInactivePickups(targetMap *map[string]Pickup, timeDifference time.Duration) {
