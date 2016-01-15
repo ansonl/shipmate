@@ -17,6 +17,7 @@ type Location struct {
 	Latitude float64 `json:"latitude"`
 	Longitude float64 `json:"longitude"`
 	Heading float64 `json:"heading"`
+	latestTime time.Time
 }
 
 //Status int constants
@@ -190,6 +191,12 @@ func getPickupInfo(w http.ResponseWriter, r *http.Request) {
 	var location Location
 
 	number = r.Form["phoneNumber"][0]
+
+	//if the pickup does not exist, return status 0, so that monitorStatus on iOS will show pickupInactive
+	if _, exist := pickups[number]; !exist {
+		fmt.Fprintf(w, successResponse)
+		return
+	}
 
 	//check passphrase in "phrase" parameter
 	if !isDriverPhraseCorrect(r.Form) {
@@ -367,6 +374,8 @@ func updateVanLocation(w http.ResponseWriter, r *http.Request) {
 
 	vanLocations[vanNumber - 1] = location
 
+	vanLocations[vanNumber - 1].latestTime = time.Now()
+
 	//reply with van location on server
 	if output, err := json.Marshal(vanLocations[vanNumber - 1]); err == nil {
 		fmt.Fprintf(w, string(output[:]))
@@ -432,17 +441,50 @@ func server(wg *sync.WaitGroup) {
     if err != nil {
       log.Fatal(err)
     } 
+
+    wg.Done()
 }
 
-func removeInactive(targetMap *map[string]Pickup, timeDifference time.Duration) {
+func removeInactivePickups(targetMap *map[string]Pickup, timeDifference time.Duration) {
 	for k, v := range *targetMap {
-		if time.Since(v.LatestTime) > timeDifference {
-			//delete(*targetMap, k)
+		if v.Status != inactive && time.Since(v.LatestTime) > timeDifference { //only check active pickups
+			//delete(*targetMap, k) do not delete, because we want to preserve the pickup records
 			v.Status = inactive
 			v.devicePhrase = ""
 			(*targetMap)[k] = v
 		}
 	}
+}
+
+func removeInactiveVanLocations(targetArray []Location, timeDifference time.Duration) {
+	var numberOfEmptyLocations int
+
+	for i := 0; i < len(targetArray); i++ {
+		fmt.Println(time.Since((targetArray)[i].latestTime))
+		if (targetArray[i].latestTime != time.Time{} && time.Since((targetArray)[i].latestTime) > timeDifference) {
+			targetArray[i].Latitude = 0
+			targetArray[i].Longitude = 0
+			targetArray[i].latestTime = time.Time{}
+			numberOfEmptyLocations++
+		} else {
+			numberOfEmptyLocations++
+		}
+	}
+
+	//if there are 'len' empty locations in the array, no vans are around so realloc array to size 0
+	if numberOfEmptyLocations == len(targetArray) {
+		vanLocations = make([]Location, 0)
+	}
+}
+
+func checkForInactive(wg *sync.WaitGroup) {
+	t := time.NewTicker(time.Duration(10) * time.Second)
+	for now := range t.C {
+		now = now
+		go removeInactivePickups(&pickups, time.Duration(10) * time.Minute)
+		go removeInactiveVanLocations(vanLocations, time.Duration(1) * time.Minute)
+	}
+	wg.Done()
 }
 
 func main() {
@@ -452,19 +494,13 @@ func main() {
 	generateSuccessResponse(&successResponse)
 	generateFailResponse(&failResponse)
 
-	t := time.NewTicker(30 * time.Second)
-
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(2)
 
 	go server(&wg)
+	go checkForInactive(&wg)
 
 	fmt.Println("Finished setting up and ready.")
-
-	for now := range t.C {
-		now = now
-		//go removeInactive(&pickups, time.Duration(15) * time.Second)
-	}
 
 	wg.Wait()
 }
