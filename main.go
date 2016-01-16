@@ -46,6 +46,7 @@ var startTime = time.Now()
 
 var successResponse string
 var failResponse string
+var wrongPasswordResponse string
 
 func generateSuccessResponse(targetString *string) {
 	tmp, err := json.Marshal(map[string]string{"status":"0"})
@@ -60,6 +61,14 @@ func generateFailResponse(targetString *string) {
 	*targetString = string(tmp)
 	if  err != nil {
 		fmt.Printf("Generating fail response failed. %v", err)
+	}
+}
+
+func generateWrongPasswordResponse(targetString *string) {
+	tmp, err := json.Marshal(map[string]string{"status":"-2"})
+	*targetString = string(tmp)
+	if  err != nil {
+		fmt.Printf("Generating wrong password response failed. %v", err)
 	}
 }
 
@@ -204,7 +213,7 @@ func getPickupInfo(w http.ResponseWriter, r *http.Request) {
 	//check passphrase in "phrase" parameter
 	if !isDriverPhraseCorrect(r.Form) {
 		if r.Form["phrase"][0] != pickups[number].devicePhrase {
-			fmt.Fprintf(w, failResponse)
+			fmt.Fprintf(w, wrongPasswordResponse)
 			return
 		}
 	}
@@ -257,7 +266,7 @@ func cancelPickup(w http.ResponseWriter, r *http.Request) {
 	//check passphrase in "phrase" parameter
 	if !isDriverPhraseCorrect(r.Form) {
 		if r.Form["phrase"][0] != pickups[number].devicePhrase {
-			fmt.Fprintf(w, failResponse)
+			fmt.Fprintf(w, wrongPasswordResponse)
 			return
 		}
 	}
@@ -500,6 +509,7 @@ func main() {
 	vanLocations = make([]Location, 0)
 	generateSuccessResponse(&successResponse)
 	generateFailResponse(&failResponse)
+	generateWrongPasswordResponse(&wrongPasswordResponse)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
