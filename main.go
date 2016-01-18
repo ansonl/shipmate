@@ -11,6 +11,8 @@ import (
 	"sync"
 	"strconv"
 	"crypto/md5"
+	_ "github.com/lib/pq"
+  	"database/sql"
 )
 
 type Location struct {
@@ -28,14 +30,14 @@ const inactive int = 0
 
 type Pickup struct {
 	PhoneNumber string `json:"phoneNumber"`
+	devicePhrase string
 	InitialLocation Location `json:"initialLocation"`
 	InitialTime time.Time `json:"initialTime"`
 	LatestLocation Location `json:"latestLocation"`
 	LatestTime time.Time `json:"latestTime"`
-	Status int `json:"status"`
 	ConfirmTime time.Time `json:"confirmTime"`
 	CompleteTime time.Time `json:"completeTime"`
-	devicePhrase string
+	Status int `json:"status"`
 }
 
 var pickups map[string]Pickup
@@ -172,12 +174,12 @@ func newPickup(w http.ResponseWriter, r *http.Request) {
 
 	//if someone else if already using that number and devicePhrase does not match, maybe the user reinstalled the app
 	//we want to allow the same device to continue using the phoneNumber if the app relaunched
-	if pickups[number].Status != 0 && pickups[number].devicePhrase != devicePhrase {
+	if pickups[number].Status != 0 && pickups[number].devicePhrase != "" && pickups[number].devicePhrase != devicePhrase{
 		fmt.Fprintf(w, failResponse)
 		return
 	}
 
-	tmp := Pickup{number, location, time.Now(), location, time.Now(), pending, time.Time{}, time.Time{}, devicePhrase}
+	tmp := Pickup{number, devicePhrase, location, time.Now(), location, time.Now(), time.Time{}, time.Time{}, pending}
 
 	pickups[number] = tmp
 
@@ -212,7 +214,7 @@ func getPickupInfo(w http.ResponseWriter, r *http.Request) {
 
 	//check passphrase in "phrase" parameter
 	if !isDriverPhraseCorrect(r.Form) {
-		if r.Form["phrase"][0] != pickups[number].devicePhrase {
+		if r.Form["phrase"][0] != pickups[number].devicePhrase && pickups[number].devicePhrase != "" {
 			fmt.Fprintf(w, wrongPasswordResponse)
 			return
 		}
@@ -265,7 +267,7 @@ func cancelPickup(w http.ResponseWriter, r *http.Request) {
 
 	//check passphrase in "phrase" parameter
 	if !isDriverPhraseCorrect(r.Form) {
-		if r.Form["phrase"][0] != pickups[number].devicePhrase {
+		if r.Form["phrase"][0] != pickups[number].devicePhrase && pickups[number].devicePhrase != ""{
 			fmt.Fprintf(w, wrongPasswordResponse)
 			return
 		}
@@ -457,6 +459,7 @@ func server(wg *sync.WaitGroup) {
   wg.Done()
 }
 
+//anything that is not inactive is set to inactive
 func removeInactivePickups(targetMap *map[string]Pickup, timeDifference time.Duration) {
 	for k, v := range *targetMap {
 		if v.Status != inactive && time.Since(v.LatestTime) > timeDifference { //only check active pickups
@@ -503,6 +506,26 @@ func checkForInactive(wg *sync.WaitGroup) {
 	wg.Done()
 }
 
+func setupDatabase() {
+	db, err := sql.Open("postgres", os.Getenv("DATABASE_URL"))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var tableExist bool
+	err = db.QueryRow("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND    table_name = 'inprogress');").Scan(&tableExist);
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("%v", tableExist)
+
+	err = db.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
+	
+}
+
 func main() {
 
 	pickups = make(map[string]Pickup)
@@ -517,7 +540,16 @@ func main() {
 	go server(&wg)
 	go checkForInactive(&wg)
 
+	/*
+	result, err = db.Exec("INSERT INTO inprogress (PhoneNumber, DeviceId, InitialLatitude, InitialLongitude, InitialTime, LatestLatitude, LatestLongitude, LatestTime, ConfirmTime, CompleteTime, Status) VALUES ('5103868680', '68753A44-4D6F-1226-9C60-0050E4C00067', 38.9844, 76.4889, '2002-10-02T10:00:00-05:00', 38.9844, 76.4889, '2002-10-02T10:00:00-05:00', DEFAULT, DEFAULT, 0); ")
+	fmt.Println(result)
+	*/
+
+	setupDatabase()
+
 	fmt.Println("Finished setting up and ready.")
+
+
 
 	wg.Wait()
 }
