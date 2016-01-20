@@ -50,6 +50,8 @@ var successResponse string
 var failResponse string
 var wrongPasswordResponse string
 
+var db *(sql.DB)
+
 func generateSuccessResponse(targetString *string) {
 	tmp, err := json.Marshal(map[string]string{"status":"0"})
 	*targetString = string(tmp)
@@ -187,6 +189,20 @@ func newPickup(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, string(output))
 	} else {
 		log.Fatal(err)
+	}
+
+	if db != nil {
+		if err := db.Ping(); err == nil {
+			if _, err := db.Exec("INSERT INTO inprogress (PhoneNumber, DeviceId, InitialLatitude, InitialLongitude, InitialTime, LatestLatitude, LatestLongitude, LatestTime, ConfirmTime, CompleteTime, Status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);", tmp.PhoneNumber, tmp.devicePhrase, tmp.InitialLocation.Latitude, tmp.InitialLocation.Longitude, tmp.InitialTime, tmp.LatestLocation.Latitude, tmp.LatestLocation.Longitude, tmp.LatestTime, tmp.ConfirmTime, tmp.CompleteTime, tmp.Status); err != nil {
+				log.Fatal(err)
+			} else {
+				fmt.Println("INSERT success? for newPickup()")
+			}
+		} else {
+			fmt.Println("DB ping failed.")
+		}
+	} else {
+		log.Fatal("DB handle is nil")
 	}
 }
 
@@ -507,23 +523,68 @@ func checkForInactive(wg *sync.WaitGroup) {
 }
 
 func setupDatabase() {
-	db, err := sql.Open("postgres", os.Getenv("DATABASE_URL"))
+	var err error //define err because mixing it with the global db var and := operator creates local scoped db
+	db, err = sql.Open("postgres", os.Getenv("DATABASE_URL"))
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	var tableExist bool
-	err = db.QueryRow("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND    table_name = 'inprogress');").Scan(&tableExist);
+	err = db.QueryRow("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND    table_name = 'inprogress');").Scan(&tableExist)
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Printf("%v", tableExist)
+	if tableExist { //load in inprogress pickups from database
+		rows, err := db.Query("SELECT * from inprogress;")
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var pickupId int
+			var tmpPickup Pickup
 
-	err = db.Close()
-	if err != nil {
-		log.Fatal(err)
+			if err := rows.Scan(&pickupId, &tmpPickup.PhoneNumber, &tmpPickup.devicePhrase, &tmpPickup.InitialLocation.Latitude, &tmpPickup.InitialLocation.Longitude, &tmpPickup.InitialTime, &tmpPickup.LatestLocation.Latitude, &tmpPickup.LatestLocation.Longitude, &tmpPickup.LatestTime, &tmpPickup.ConfirmTime, &tmpPickup.CompleteTime, &tmpPickup.Status); err != nil {
+				log.Fatal(err)
+			}
+
+			/*
+			//Currently no way to handle a column that can be time.Time or NULL
+
+			var tmpConfirmTime sql.NullString
+			var tmpCompleteTime sql.NullString
+
+			layout := "2016-01-19 22:25:13.047371"
+			if tmpConfirmTime.Valid {
+				timeStamp, err := time.Parse(layout, tmpConfirmTime.String)
+				if err != nil {
+					tmpPickup.ConfirmTime = timeStamp
+				} else {
+					tmpPickup.ConfirmTime = time.Time{}
+				}
+			} else {
+				tmpPickup.ConfirmTime = time.Time{}
+			}
+
+			if tmpCompleteTime.Valid {
+				timeStamp, err := time.Parse(layout, tmpCompleteTime.String)
+				if err != nil {
+					tmpPickup.CompleteTime = timeStamp
+				} else {
+					tmpPickup.CompleteTime = time.Time{}
+				}
+			} else {
+				tmpPickup.CompleteTime = time.Time{}
+			}
+			*/
+			fmt.Printf("%v", tmpPickup)
+
+		}
+
+	} else { //create new inprogress database
+
 	}
-	
 }
 
 func main() {
@@ -538,7 +599,7 @@ func main() {
 	wg.Add(2)
 
 	go server(&wg)
-	go checkForInactive(&wg)
+	//go checkForInactive(&wg)
 
 	/*
 	result, err = db.Exec("INSERT INTO inprogress (PhoneNumber, DeviceId, InitialLatitude, InitialLongitude, InitialTime, LatestLatitude, LatestLongitude, LatestTime, ConfirmTime, CompleteTime, Status) VALUES ('5103868680', '68753A44-4D6F-1226-9C60-0050E4C00067', 38.9844, 76.4889, '2002-10-02T10:00:00-05:00', 38.9844, 76.4889, '2002-10-02T10:00:00-05:00', DEFAULT, DEFAULT, 0); ")
@@ -552,4 +613,9 @@ func main() {
 
 
 	wg.Wait()
+
+	err := db.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
 }
