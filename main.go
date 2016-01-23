@@ -201,7 +201,10 @@ func newPickup(w http.ResponseWriter, r *http.Request) {
 }
 
 func getPickupInfo(w http.ResponseWriter, r *http.Request) {
+	/*
+	//Disable logging for getPickupInfo for brevity
 	log.Println("getPickupInfo()")
+	*/
 
     //bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -254,7 +257,10 @@ func getPickupInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func getVanLocations(w http.ResponseWriter, r *http.Request) {
+	/*
+	//Disabled logging of getVanLocations for brevity
 	log.Println("getVanLocations()")
+	*/
 
 	//bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -509,7 +515,7 @@ func updateVanLocation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !doKeysExist(r.Form, []string{"vanNumber", "latitude", "longitude"}) && areFieldsEmpty(r.Form ,[]string{"vanNumber", "latitude", "longitude"}) {
-		log.Println("required http parameters not found for getPickupInfo")
+		log.Println("required http parameters not found for updateVanLocation")
 	}
 
 	var vanNumber int
