@@ -306,9 +306,9 @@ func cancelPickup(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Fprintf(w, successResponse);
 
-	//perform UPDATE, DELETE in order
-	serialChannel <- func() { databaseUpdatePickupStatusInCurrentTable(number, canceled) } //canceled status (5) only shown in database, server app structs will never see it
-	serialChannel <- func() { databaseInsertPickupInPastTable(number) }
+	//perform INSERT, DELETE in order
+	//serialChannel <- func() { databaseUpdatePickupStatusInCurrentTable(number, canceled) } //canceled status (5) only shown in database, server app structs will never see it
+	serialChannel <- func() { databaseInsertPickupInPastTable(tmp) }
 	serialChannel <- func() { databaseDeletePickupInCurrentTable(number) }
 }
 
@@ -399,7 +399,7 @@ func completePickup(w http.ResponseWriter, r *http.Request) {
 
 	//perform UPDATE, INSERT, DELETE in order
 	serialChannel <- func() { databaseUpdatePickupStatusInCurrentTable(number, completed) }
-	serialChannel <- func() { databaseInsertPickupInPastTable(number) }
+	serialChannel <- func() { databaseInsertPickupInPastTable(tmp) }
 	serialChannel <- func() { databaseDeletePickupInCurrentTable(number) }
 }
 
@@ -461,11 +461,11 @@ func databaseUpdatePickupLatestLocationInCurrentTable(targetPhoneNumber string, 
 }
 
 //Copy over to pastpickups table and call function to delete from inprogress table
-func databaseInsertPickupInPastTable(targetPhoneNumber string) {
+func databaseInsertPickupInPastTable(targetPickup Pickup) {
 	if db != nil {
 		if err := db.Ping(); err == nil {
 			var result sql.Result
-			if result, err = db.Exec("INSERT INTO pastpickups SELECT * FROM inprogress WHERE PhoneNumber = $1;", targetPhoneNumber); err != nil {
+			if result, err = db.Exec("INSERT INTO pastpickups (PhoneNumber, DeviceId, InitialLatitude, InitialLongitude, InitialTime, LatestLatitude, LatestLongitude, LatestTime, ConfirmTime, CompleteTime, Status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);", targetPickup.PhoneNumber, targetPickup.devicePhrase, targetPickup.InitialLocation.Latitude, targetPickup.InitialLocation.Longitude, targetPickup.InitialTime, targetPickup.LatestLocation.Latitude, targetPickup.LatestLocation.Longitude, targetPickup.LatestTime, targetPickup.ConfirmTime, targetPickup.CompleteTime, targetPickup.Status); err != nil {
 				log.Println(err)
 			} else {
 				rowsAffected, _ := result.RowsAffected()
@@ -477,7 +477,6 @@ func databaseInsertPickupInPastTable(targetPhoneNumber string) {
 	} else {
 		log.Println("DB handle is nil")
 	}
-	databaseDeletePickupInCurrentTable(targetPhoneNumber)
 }
 
 //DELETE pickup from inprogress table
@@ -485,7 +484,7 @@ func databaseDeletePickupInCurrentTable(targetPhoneNumber string) {
 	if db != nil {
 		if err := db.Ping(); err == nil {
 			var result sql.Result
-			if result, err = db.Exec("DELETE FROM pastpickups WHERE PhoneNumber = $1;", targetPhoneNumber); err != nil {
+			if result, err = db.Exec("DELETE FROM inprogress WHERE PhoneNumber = $1;", targetPhoneNumber); err != nil {
 				log.Println(err)
 			} else {
 				rowsAffected, _ := result.RowsAffected()
@@ -611,7 +610,7 @@ func removeInactivePickups(targetMap *map[string]Pickup, timeDifference time.Dur
 
 			//perform UPDATE, INSERT, DELETE in order
 			serialChannel <- func() { databaseUpdatePickupStatusInCurrentTable(v.PhoneNumber, inactive) }
-			serialChannel <- func() { databaseInsertPickupInPastTable(v.PhoneNumber) }
+			serialChannel <- func() { databaseInsertPickupInPastTable(v) }
 			serialChannel <- func() { databaseDeletePickupInCurrentTable(v.PhoneNumber) }
 				}
 	}
@@ -741,7 +740,7 @@ func setupPastDatabase() {
 		if _, err = db.Exec("CREATE TABLE pastpickups (PickupId SERIAL,PhoneNumber CHAR(10) NOT NULL,DeviceId VARCHAR(36) NOT NULL,InitialLatitude REAL NOT NULL,InitialLongitude REAL NOT NULL,InitialTime TIMESTAMP NOT NULL,LatestLatitude REAL NOT NULL,LatestLongitude REAL NOT NULL,LatestTime TIMESTAMP NOT NULL,ConfirmTime TIMESTAMP NOT NULL,CompleteTime TIMESTAMP NOT NULL,Status INT NOT NULL,CONSTRAINT Check_PhoneNumber CHECK (CHAR_LENGTH(PhoneNumber) = 10));"); err != nil {
 			log.Println(err)
 		} else {
-			log.Println("CREATE TABLE inprogress executed\n")
+			log.Println("CREATE TABLE pastpickups executed\n")
 		}
 	}
 }
