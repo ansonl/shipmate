@@ -299,6 +299,13 @@ func cancelPickup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var tmp = pickups[number]
+
+	//perform INSERT, DELETE in order
+	//serialChannel <- func() { databaseUpdatePickupStatusInCurrentTable(number, canceled) } //canceled status (5) only shown in database, server app structs will never see it
+	serialChannel <- func() { databaseInsertPickupInPastTable(tmp) }
+	serialChannel <- func() { databaseDeletePickupInCurrentTable(number) }
+	
+	//do database before updating structin memory to preserve device phrase
 	tmp.Status = inactive
 	tmp.LatestTime = time.Now()
 	tmp.devicePhrase = ""
@@ -306,10 +313,7 @@ func cancelPickup(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Fprintf(w, successResponse);
 
-	//perform INSERT, DELETE in order
-	//serialChannel <- func() { databaseUpdatePickupStatusInCurrentTable(number, canceled) } //canceled status (5) only shown in database, server app structs will never see it
-	serialChannel <- func() { databaseInsertPickupInPastTable(tmp) }
-	serialChannel <- func() { databaseDeletePickupInCurrentTable(number) }
+	
 }
 
 func getPickupList(w http.ResponseWriter, r *http.Request) {
