@@ -28,6 +28,8 @@ const confirmed int = 2
 const completed int = 3
 const inactive int = 0
 
+const canceled int = 5 //only used when copying into pastPickups table
+
 type Pickup struct {
 	PhoneNumber string `json:"phoneNumber"`
 	devicePhrase string
@@ -51,6 +53,8 @@ var failResponse string
 var wrongPasswordResponse string
 
 var db *(sql.DB)
+
+var serialChannel chan func();
 
 func generateSuccessResponse(targetString *string) {
 	tmp, err := json.Marshal(map[string]string{"status":"0"})
@@ -128,7 +132,7 @@ func aboutHandler(w http.ResponseWriter, r *http.Request) {
 	
 	http.Redirect(w, r, "https://github.com/ansonl/shipmate", http.StatusFound)
 
-	fmt.Println("About requested")
+	log.Println("About requested")
 }
 
 func uptimeHandler(w http.ResponseWriter, r *http.Request) {
@@ -139,17 +143,18 @@ func uptimeHandler(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Fprintf(w, "Uptime:\t%v\nPickups total:\t%v\nVans total:\t%v", diff.String(), len(pickups), len(vanLocations))
 
-	fmt.Println("Uptime requested")
+	log.Println("Uptime requested")
 }
 
 func newPickup(w http.ResponseWriter, r *http.Request) {
+	log.Println("newPickup()")
     //bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	r.ParseForm()
 
 	if !doKeysExist(r.Form, []string{"phoneNumber", "latitude", "longitude", "phrase"}) && areFieldsEmpty(r.Form ,[]string{"phoneNumber", "latitude", "longitude", "phrase"}) {
-		log.Fatal("required http parameters not found for newPickup")
+		log.Println("required http parameters not found for newPickup")
 	}
 
 	var number, devicePhrase string
@@ -158,7 +163,7 @@ func newPickup(w http.ResponseWriter, r *http.Request) {
 	/*
 	number, err := strconv.Atoi(r.Form["phoneNumber"][0]);
 	if  err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 	*/
 
@@ -169,7 +174,7 @@ func newPickup(w http.ResponseWriter, r *http.Request) {
 	lon, err := strconv.ParseFloat(r.Form["longitude"][0], 64);
 
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	} else {
 		location = Location{Latitude: lat, Longitude: lon}
 	}
@@ -187,26 +192,17 @@ func newPickup(w http.ResponseWriter, r *http.Request) {
 
 	if output, err := json.Marshal(pickups[number]); err == nil {
 		fmt.Fprintf(w, string(output))
-	} else {
-		log.Fatal(err)
-	}
 
-	if db != nil {
-		if err := db.Ping(); err == nil {
-			if _, err := db.Exec("INSERT INTO inprogress (PhoneNumber, DeviceId, InitialLatitude, InitialLongitude, InitialTime, LatestLatitude, LatestLongitude, LatestTime, ConfirmTime, CompleteTime, Status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);", tmp.PhoneNumber, tmp.devicePhrase, tmp.InitialLocation.Latitude, tmp.InitialLocation.Longitude, tmp.InitialTime, tmp.LatestLocation.Latitude, tmp.LatestLocation.Longitude, tmp.LatestTime, tmp.ConfirmTime, tmp.CompleteTime, tmp.Status); err != nil {
-				log.Fatal(err)
-			} else {
-				fmt.Println("INSERT success? for newPickup()")
-			}
-		} else {
-			fmt.Println("DB ping failed.")
-		}
+		//INSERT pickup as new row into inprogress table
+		serialChannel <- func() { databaseInsertPickupInCurrentTable(tmp) }
 	} else {
-		log.Fatal("DB handle is nil")
+		log.Println(err)
 	}
 }
 
 func getPickupInfo(w http.ResponseWriter, r *http.Request) {
+	log.Println("getPickupInfo()")
+
     //bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
@@ -214,7 +210,7 @@ func getPickupInfo(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 
 	if !doKeysExist(r.Form, []string{"phoneNumber", "latitude", "longitude", "phrase"}) && areFieldsEmpty(r.Form ,[]string{"phoneNumber", "latitude", "longitude", "phrase"}) {
-		log.Fatal("required http parameters not found for getPickupInfo")
+		log.Println("required http parameters not found for getPickupInfo")
 	}
 
 	var number string
@@ -249,12 +245,17 @@ func getPickupInfo(w http.ResponseWriter, r *http.Request) {
 
 	if output, err := json.Marshal(pickups[number]); err == nil {
 		fmt.Fprintf(w, string(output[:]))
+
+		//UPDATE pickup location in inprogress table
+		serialChannel <- func() { databaseUpdatePickupLatestLocationInCurrentTable(number, location, time.Now())}
 	} else {
-		log.Fatal(err)
+		log.Println(err)
 	}
 }
 
 func getVanLocations(w http.ResponseWriter, r *http.Request) {
+	log.Println("getVanLocations()")
+
 	//bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
@@ -262,11 +263,13 @@ func getVanLocations(w http.ResponseWriter, r *http.Request) {
 	if output, err := json.Marshal(vanLocations); err == nil {
 		fmt.Fprintf(w, string(output[:]))
 	} else {
-		log.Fatal(err)
+		log.Println(err)
 	}
 }
 
 func cancelPickup(w http.ResponseWriter, r *http.Request) {
+	log.Println("cancelPickup()")
+
     //bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
@@ -274,7 +277,7 @@ func cancelPickup(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
 
 	if !doKeysExist(r.Form, []string{"phoneNumber", "phrase"}) && areFieldsEmpty(r.Form ,[]string{"phoneNumber", "phrase"}) {
-		log.Fatal("required http parameters not found for getPickupInfo")
+		log.Println("required http parameters not found for getPickupInfo")
 	}
 
 	var number string
@@ -296,9 +299,16 @@ func cancelPickup(w http.ResponseWriter, r *http.Request) {
 	pickups[number] = tmp
 
 	fmt.Fprintf(w, successResponse);
+
+	//perform UPDATE, DELETE in order
+	serialChannel <- func() { databaseUpdatePickupStatusInCurrentTable(number, canceled) } //canceled status (5) only shown in database, server app structs will never see it
+	serialChannel <- func() { databaseInsertPickupInPastTable(number) }
+	serialChannel <- func() { databaseDeletePickupInCurrentTable(number) }
 }
 
 func getPickupList(w http.ResponseWriter, r *http.Request) {
+	log.Println("getPickupList()")
+
 	//bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
@@ -314,11 +324,13 @@ func getPickupList(w http.ResponseWriter, r *http.Request) {
 	if output, err := json.Marshal(pickups); err == nil {
 		fmt.Fprintf(w, string(output[:]))
 	} else {
-		log.Fatal(err)
+		log.Println(err)
 	}
 }
 
 func confirmPickup(w http.ResponseWriter, r *http.Request) {
+    log.Println("confirmPickup()")
+
     //bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
@@ -332,7 +344,7 @@ func confirmPickup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !doKeysExist(r.Form, []string{"phoneNumber"}) && areFieldsEmpty(r.Form ,[]string{"phoneNumber"}) {
-		log.Fatal("required http parameters not found for confirmPickup")
+		log.Println("required http parameters not found for confirmPickup")
 	}
 
 	var number string
@@ -345,9 +357,13 @@ func confirmPickup(w http.ResponseWriter, r *http.Request) {
 	pickups[number] = tmp
 
 	fmt.Fprintf(w, successResponse)
+
+	serialChannel <- func() { databaseUpdatePickupStatusInCurrentTable(number, confirmed)}
 }
 
 func completePickup(w http.ResponseWriter, r *http.Request) {
+	log.Println("completePickup()")
+
 	//bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
@@ -361,7 +377,7 @@ func completePickup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !doKeysExist(r.Form, []string{"phoneNumber"}) && areFieldsEmpty(r.Form ,[]string{"phoneNumber"}) {
-		log.Fatal("required http parameters not found for completePickup")
+		log.Println("required http parameters not found for completePickup")
 	}
 
 	var number string
@@ -374,9 +390,112 @@ func completePickup(w http.ResponseWriter, r *http.Request) {
 	pickups[number] = tmp
 
 	fmt.Fprintf(w, successResponse)
+
+	//perform UPDATE, INSERT, DELETE in order
+	serialChannel <- func() { databaseUpdatePickupStatusInCurrentTable(number, completed) }
+	serialChannel <- func() { databaseInsertPickupInPastTable(number) }
+	serialChannel <- func() { databaseDeletePickupInCurrentTable(number) }
+}
+
+//INSERT new pickup row in inprogress table
+func databaseInsertPickupInCurrentTable(targetPickup Pickup) {
+	if db != nil {
+		if err := db.Ping(); err == nil {
+			var result sql.Result
+			if result, err = db.Exec("INSERT INTO inprogress (PhoneNumber, DeviceId, InitialLatitude, InitialLongitude, InitialTime, LatestLatitude, LatestLongitude, LatestTime, ConfirmTime, CompleteTime, Status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);", targetPickup.PhoneNumber, targetPickup.devicePhrase, targetPickup.InitialLocation.Latitude, targetPickup.InitialLocation.Longitude, targetPickup.InitialTime, targetPickup.LatestLocation.Latitude, targetPickup.LatestLocation.Longitude, targetPickup.LatestTime, targetPickup.ConfirmTime, targetPickup.CompleteTime, targetPickup.Status); err != nil {
+				log.Println(err)
+			} else {
+				rowsAffected, _ := result.RowsAffected()
+				fmt.Printf("INSERT %v rows affected for databaseInsertPickupInCurrentTable()\n", rowsAffected)
+			}
+		} else {
+			fmt.Println("DB ping failed.")
+		}
+	} else {
+		log.Println("DB handle is nil")
+	}
+}
+
+//UPDATE pickup status in inprogress table
+func databaseUpdatePickupStatusInCurrentTable(targetPhoneNumber string, targetStatus int) {
+	if db != nil {
+		if err := db.Ping(); err == nil {
+			var result sql.Result
+			if result, err = db.Exec("UPDATE inprogress SET Status = $1 WHERE PhoneNumber = $2;", targetStatus, targetPhoneNumber); err != nil {
+				log.Println(err)
+			} else {
+				rowsAffected, _ := result.RowsAffected()
+				fmt.Printf("UPDATE %v rows affected for databaseUpdatePickupStatusInCurrentTable()\n", rowsAffected)
+			}
+		} else {
+			fmt.Println("DB ping failed.")
+		}
+	} else {
+		log.Println("DB handle is nil")
+	}
+}
+
+//UPDATE pickup latestLocation in inprogress table
+func databaseUpdatePickupLatestLocationInCurrentTable(targetPhoneNumber string, targetLatestLocation Location, targetTime time.Time) {
+	if db != nil {
+		if err := db.Ping(); err == nil {
+			var result sql.Result
+			if result, err = db.Exec("UPDATE inprogress SET LatestLatitude = $1, LatestLongitude = $2, LatestTime = $3 WHERE PhoneNumber = $4;", targetLatestLocation.Latitude, targetLatestLocation.Longitude, targetTime, targetPhoneNumber); err != nil {
+				log.Println(err)
+			} else {
+				rowsAffected, _ := result.RowsAffected()
+				fmt.Printf("UPDATE %v rows affected for databaseUpdatePickupLatestLocationInCurrentTable()\n", rowsAffected)
+			}
+		} else {
+			fmt.Println("DB ping failed.")
+		}
+	} else {
+		log.Println("DB handle is nil")
+	}
+}
+
+//Copy over to pastpickups table and call function to delete from inprogress table
+func databaseInsertPickupInPastTable(targetPhoneNumber string) {
+	if db != nil {
+		if err := db.Ping(); err == nil {
+			var result sql.Result
+			if result, err = db.Exec("INSERT INTO pastpickups SELECT * FROM inprogress WHERE PhoneNumber = $1;", targetPhoneNumber); err != nil {
+				log.Println(err)
+			} else {
+				rowsAffected, _ := result.RowsAffected()
+				fmt.Printf("INSERT %v rows affected for databaseInsertPickupInPastTable()\n", rowsAffected)
+			}
+		} else {
+			fmt.Println("DB ping failed.")
+		}
+	} else {
+		log.Println("DB handle is nil")
+	}
+	databaseDeletePickupInCurrentTable(targetPhoneNumber)
+}
+
+//DELETE pickup from inprogress table
+func databaseDeletePickupInCurrentTable(targetPhoneNumber string) {
+	if db != nil {
+		if err := db.Ping(); err == nil {
+			var result sql.Result
+			if result, err = db.Exec("DELETE FROM pastpickups WHERE PhoneNumber = $1;", targetPhoneNumber); err != nil {
+				log.Println(err)
+			} else {
+				rowsAffected, _ := result.RowsAffected()
+				fmt.Printf("DELETE %v rows affected for databaseDeletePickupInCurrentTable()\n", rowsAffected)
+			}
+		} else {
+			fmt.Println("DB ping failed.")
+		}
+	} else {
+		log.Println("DB handle is nil")
+	}
 }
 
 func updateVanLocation(w http.ResponseWriter, r *http.Request) {
+	log.Println("updateVanLocation()")
+
 	//bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
@@ -390,7 +509,7 @@ func updateVanLocation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !doKeysExist(r.Form, []string{"vanNumber", "latitude", "longitude"}) && areFieldsEmpty(r.Form ,[]string{"vanNumber", "latitude", "longitude"}) {
-		log.Fatal("required http parameters not found for getPickupInfo")
+		log.Println("required http parameters not found for getPickupInfo")
 	}
 
 	var vanNumber int
@@ -398,7 +517,7 @@ func updateVanLocation(w http.ResponseWriter, r *http.Request) {
 
 	vanNumber, err := strconv.Atoi(r.Form["vanNumber"][0]);
 	if  err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 
 	//5 vans max, #1-5
@@ -406,7 +525,7 @@ func updateVanLocation(w http.ResponseWriter, r *http.Request) {
 		if output, err := json.Marshal(Location{}); err == nil {
 			fmt.Fprintf(w, string(output[:]))
 		} else {
-			log.Fatal(err)
+			log.Println(err)
 		}
 		return
 	}
@@ -414,7 +533,7 @@ func updateVanLocation(w http.ResponseWriter, r *http.Request) {
 	lat, err := strconv.ParseFloat(r.Form["latitude"][0], 64);
 	lon, err := strconv.ParseFloat(r.Form["longitude"][0], 64);
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	} else {
 		location = Location{Latitude: lat, Longitude: lon}
 	}
@@ -422,7 +541,7 @@ func updateVanLocation(w http.ResponseWriter, r *http.Request) {
 	if doKeysExist(r.Form, []string{"heading"}) && !areFieldsEmpty(r.Form ,[]string{"heading"}) {
 		heading, err := strconv.ParseFloat(r.Form["heading"][0], 64);
 		if err != nil {
-			log.Fatal(err)
+			log.Println(err)
 		} else {
 			location.Heading = heading
 		}
@@ -442,7 +561,7 @@ func updateVanLocation(w http.ResponseWriter, r *http.Request) {
 	if output, err := json.Marshal(vanLocations[vanNumber - 1]); err == nil {
 		fmt.Fprintf(w, string(output[:]))
 	} else {
-		log.Fatal(err)
+		log.Println(err)
 	}
 }
 
@@ -469,7 +588,7 @@ func server(wg *sync.WaitGroup) {
   err := http.ListenAndServe(":"+os.Getenv("PORT"), nil) 
   fmt.Println("Listening on " + os.Getenv("PORT"))
   if err != nil {
-    log.Fatal(err)
+    log.Println(err)
   } 
 
   wg.Done()
@@ -483,7 +602,12 @@ func removeInactivePickups(targetMap *map[string]Pickup, timeDifference time.Dur
 			v.Status = inactive
 			v.devicePhrase = ""
 			(*targetMap)[k] = v
-		}
+
+			//perform UPDATE, INSERT, DELETE in order
+			serialChannel <- func() { databaseUpdatePickupStatusInCurrentTable(v.PhoneNumber, inactive) }
+			serialChannel <- func() { databaseInsertPickupInPastTable(v.PhoneNumber) }
+			serialChannel <- func() { databaseDeletePickupInCurrentTable(v.PhoneNumber) }
+				}
 	}
 }
 
@@ -522,68 +646,97 @@ func checkForInactive(wg *sync.WaitGroup) {
 	wg.Done()
 }
 
-func setupDatabase() {
+func setupCurrentDatabase() {
 	var err error //define err because mixing it with the global db var and := operator creates local scoped db
 	db, err = sql.Open("postgres", os.Getenv("DATABASE_URL"))
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 
 	var tableExist bool
 	err = db.QueryRow("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND    table_name = 'inprogress');").Scan(&tableExist)
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
-	fmt.Printf("%v", tableExist)
 	if tableExist { //load in inprogress pickups from database
-		rows, err := db.Query("SELECT * from inprogress;")
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var pickupId int
-			var tmpPickup Pickup
-
-			if err := rows.Scan(&pickupId, &tmpPickup.PhoneNumber, &tmpPickup.devicePhrase, &tmpPickup.InitialLocation.Latitude, &tmpPickup.InitialLocation.Longitude, &tmpPickup.InitialTime, &tmpPickup.LatestLocation.Latitude, &tmpPickup.LatestLocation.Longitude, &tmpPickup.LatestTime, &tmpPickup.ConfirmTime, &tmpPickup.CompleteTime, &tmpPickup.Status); err != nil {
-				log.Fatal(err)
+		go func() {
+			rows, err := db.Query("SELECT * from inprogress;")
+			if err != nil {
+				log.Println(err)
 			}
+			var countOfRows = 0
+			for rows.Next() {
+				var pickupId int
+				var tmpPickup Pickup
 
-			/*
-			//Currently no way to handle a column that can be time.Time or NULL
+				if err := rows.Scan(&pickupId, &tmpPickup.PhoneNumber, &tmpPickup.devicePhrase, &tmpPickup.InitialLocation.Latitude, &tmpPickup.InitialLocation.Longitude, &tmpPickup.InitialTime, &tmpPickup.LatestLocation.Latitude, &tmpPickup.LatestLocation.Longitude, &tmpPickup.LatestTime, &tmpPickup.ConfirmTime, &tmpPickup.CompleteTime, &tmpPickup.Status); err != nil {
+					log.Println(err)
+				}
 
-			var tmpConfirmTime sql.NullString
-			var tmpCompleteTime sql.NullString
+				/*
+				//Currently no way to handle a column that can be time.Time or NULL
 
-			layout := "2016-01-19 22:25:13.047371"
-			if tmpConfirmTime.Valid {
-				timeStamp, err := time.Parse(layout, tmpConfirmTime.String)
-				if err != nil {
-					tmpPickup.ConfirmTime = timeStamp
+				var tmpConfirmTime sql.NullString
+				var tmpCompleteTime sql.NullString
+
+				layout := "2016-01-19 22:25:13.047371"
+				if tmpConfirmTime.Valid {
+					timeStamp, err := time.Parse(layout, tmpConfirmTime.String)
+					if err != nil {
+						tmpPickup.ConfirmTime = timeStamp
+					} else {
+						tmpPickup.ConfirmTime = time.Time{}
+					}
 				} else {
 					tmpPickup.ConfirmTime = time.Time{}
 				}
-			} else {
-				tmpPickup.ConfirmTime = time.Time{}
-			}
 
-			if tmpCompleteTime.Valid {
-				timeStamp, err := time.Parse(layout, tmpCompleteTime.String)
-				if err != nil {
-					tmpPickup.CompleteTime = timeStamp
+				if tmpCompleteTime.Valid {
+					timeStamp, err := time.Parse(layout, tmpCompleteTime.String)
+					if err != nil {
+						tmpPickup.CompleteTime = timeStamp
+					} else {
+						tmpPickup.CompleteTime = time.Time{}
+					}
 				} else {
 					tmpPickup.CompleteTime = time.Time{}
 				}
-			} else {
-				tmpPickup.CompleteTime = time.Time{}
+				*/
+				fmt.Printf("Loaded existing pickup for %v\n", tmpPickup.PhoneNumber)
+				pickups[tmpPickup.PhoneNumber] = tmpPickup
+				countOfRows++
 			}
-			*/
-			fmt.Printf("%v", tmpPickup)
-
-		}
+			rows.Close()
+			log.Printf("Finished loading %v pickups.\n", countOfRows)
+		}()
 
 	} else { //create new inprogress database
+		if _, err = db.Exec("CREATE TABLE inprogress (PickupId SERIAL,PhoneNumber CHAR(10) NOT NULL,DeviceId VARCHAR(36) NOT NULL,InitialLatitude REAL NOT NULL,InitialLongitude REAL NOT NULL,InitialTime TIMESTAMP NOT NULL,LatestLatitude REAL NOT NULL,LatestLongitude REAL NOT NULL,LatestTime TIMESTAMP NOT NULL,ConfirmTime TIMESTAMP NOT NULL,CompleteTime TIMESTAMP NOT NULL,Status INT NOT NULL,CONSTRAINT PK_PickupIdInProgress PRIMARY KEY (PickupId),CONSTRAINT Check_PhoneNumber CHECK (CHAR_LENGTH(PhoneNumber) = 10));"); err != nil {
+			log.Println(err)
+		} else {
+			log.Println("CREATE TABLE inprogress executed\n")
+		}
+	}
+}
 
+func setupPastDatabase() {
+	var err error //define err because mixing it with the global db var and := operator creates local scoped db
+	db, err = sql.Open("postgres", os.Getenv("DATABASE_URL"))
+	if err != nil {
+		log.Println(err)
+	}
+
+	var tableExist bool
+	err = db.QueryRow("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'pastpickups');").Scan(&tableExist)
+	if err != nil {
+		log.Println(err)
+	}
+	if !tableExist {
+		if _, err = db.Exec("CREATE TABLE pastpickups (PickupId SERIAL,PhoneNumber CHAR(10) NOT NULL,DeviceId VARCHAR(36) NOT NULL,InitialLatitude REAL NOT NULL,InitialLongitude REAL NOT NULL,InitialTime TIMESTAMP NOT NULL,LatestLatitude REAL NOT NULL,LatestLongitude REAL NOT NULL,LatestTime TIMESTAMP NOT NULL,ConfirmTime TIMESTAMP NOT NULL,CompleteTime TIMESTAMP NOT NULL,Status INT NOT NULL,CONSTRAINT Check_PhoneNumber CHECK (CHAR_LENGTH(PhoneNumber) = 10));"); err != nil {
+			log.Println(err)
+		} else {
+			log.Println("CREATE TABLE inprogress executed\n")
+		}
 	}
 }
 
@@ -595,27 +748,43 @@ func main() {
 	generateFailResponse(&failResponse)
 	generateWrongPasswordResponse(&wrongPasswordResponse)
 
+	//create channel of function type
+	serialChannel = make(chan func())
+	//spawn go routine to continuously read and run functions in the channel
+	go func() {
+		for true {
+			tmp := <-serialChannel
+			tmp()
+		}
+	}()
+	/*
+	//test the serialChannel
+	serialChannel <- func() { log.Println("i=1")}
+	serialChannel <- func() { log.Println("i=2")}
+	serialChannel <- func() { log.Println("i=3")}
+	serialChannel <- func() { log.Println("i=4")}
+	*/
+
 	var wg sync.WaitGroup
 	wg.Add(2)
 
 	go server(&wg)
 	//go checkForInactive(&wg)
-
+	
 	/*
 	result, err = db.Exec("INSERT INTO inprogress (PhoneNumber, DeviceId, InitialLatitude, InitialLongitude, InitialTime, LatestLatitude, LatestLongitude, LatestTime, ConfirmTime, CompleteTime, Status) VALUES ('5103868680', '68753A44-4D6F-1226-9C60-0050E4C00067', 38.9844, 76.4889, '2002-10-02T10:00:00-05:00', 38.9844, 76.4889, '2002-10-02T10:00:00-05:00', DEFAULT, DEFAULT, 0); ")
 	fmt.Println(result)
 	*/
 
-	setupDatabase()
+	setupCurrentDatabase()
+	setupPastDatabase()
 
-	fmt.Println("Finished setting up and ready.")
-
-
+	fmt.Println("Finished setting up and ready. Loading existing pickups stored on database into memory may be happening in background.")
 
 	wg.Wait()
 
 	err := db.Close()
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 }
