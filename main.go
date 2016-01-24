@@ -1,24 +1,24 @@
 package main
 
 import (
+	"crypto/md5"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	_ "github.com/ansonl/shipmate/Godeps/_workspace/src/github.com/lib/pq"
+	"log"
 	"net/http"
 	"net/url"
-	"time"
 	"os"
-	"log"
-	"sync"
 	"strconv"
-	"crypto/md5"
-	_ "github.com/lib/pq"
-  	"database/sql"
+	"sync"
+	"time"
 )
 
 type Location struct {
-	Latitude float64 `json:"latitude"`
-	Longitude float64 `json:"longitude"`
-	Heading float64 `json:"heading"`
+	Latitude   float64 `json:"latitude"`
+	Longitude  float64 `json:"longitude"`
+	Heading    float64 `json:"heading"`
 	latestTime time.Time
 }
 
@@ -31,15 +31,15 @@ const inactive int = 0
 const canceled int = 5 //only used when copying into pastPickups table
 
 type Pickup struct {
-	PhoneNumber string `json:"phoneNumber"`
-	devicePhrase string
-	InitialLocation Location `json:"initialLocation"`
-	InitialTime time.Time `json:"initialTime"`
-	LatestLocation Location `json:"latestLocation"`
-	LatestTime time.Time `json:"latestTime"`
-	ConfirmTime time.Time `json:"confirmTime"`
-	CompleteTime time.Time `json:"completeTime"`
-	Status int `json:"status"`
+	PhoneNumber     string `json:"phoneNumber"`
+	devicePhrase    string
+	InitialLocation Location  `json:"initialLocation"`
+	InitialTime     time.Time `json:"initialTime"`
+	LatestLocation  Location  `json:"latestLocation"`
+	LatestTime      time.Time `json:"latestTime"`
+	ConfirmTime     time.Time `json:"confirmTime"`
+	CompleteTime    time.Time `json:"completeTime"`
+	Status          int       `json:"status"`
 }
 
 var pickups map[string]Pickup
@@ -54,28 +54,28 @@ var wrongPasswordResponse string
 
 var db *(sql.DB)
 
-var serialChannel chan func();
+var serialChannel chan func()
 
 func generateSuccessResponse(targetString *string) {
-	tmp, err := json.Marshal(map[string]string{"status":"0"})
+	tmp, err := json.Marshal(map[string]string{"status": "0"})
 	*targetString = string(tmp)
-	if  err != nil {
+	if err != nil {
 		fmt.Printf("Generating success response failed. %v", err)
 	}
 }
 
 func generateFailResponse(targetString *string) {
-	tmp, err := json.Marshal(map[string]string{"status":"-1"})
+	tmp, err := json.Marshal(map[string]string{"status": "-1"})
 	*targetString = string(tmp)
-	if  err != nil {
+	if err != nil {
 		fmt.Printf("Generating fail response failed. %v", err)
 	}
 }
 
 func generateWrongPasswordResponse(targetString *string) {
-	tmp, err := json.Marshal(map[string]string{"status":"-2"})
+	tmp, err := json.Marshal(map[string]string{"status": "-2"})
 	*targetString = string(tmp)
-	if  err != nil {
+	if err != nil {
 		fmt.Printf("Generating wrong password response failed. %v", err)
 	}
 }
@@ -114,7 +114,7 @@ func checkMD5(password []byte) bool {
 }
 
 func isDriverPhraseCorrect(targetDictionary url.Values) bool {
-	if doKeysExist(targetDictionary, []string{"phrase"}) && !areFieldsEmpty(targetDictionary ,[]string{"phrase"}) {
+	if doKeysExist(targetDictionary, []string{"phrase"}) && !areFieldsEmpty(targetDictionary, []string{"phrase"}) {
 		if checkMD5([]byte(targetDictionary["phrase"][0])) {
 			return true
 		} else {
@@ -127,18 +127,18 @@ func isDriverPhraseCorrect(targetDictionary url.Values) bool {
 }
 
 func aboutHandler(w http.ResponseWriter, r *http.Request) {
-    //bypass same origin policy
+	//bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	
+
 	http.Redirect(w, r, "https://github.com/ansonl/shipmate", http.StatusFound)
 
 	log.Println("About requested")
 }
 
 func uptimeHandler(w http.ResponseWriter, r *http.Request) {
-    //bypass same origin policy
+	//bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	
+
 	diff := time.Since(startTime)
 
 	fmt.Fprintf(w, "Uptime:\t%v\nPickups total:\t%v\nVans total:\t%v", diff.String(), len(pickups), len(vanLocations))
@@ -148,12 +148,12 @@ func uptimeHandler(w http.ResponseWriter, r *http.Request) {
 
 func newPickup(w http.ResponseWriter, r *http.Request) {
 	log.Println("newPickup()")
-    //bypass same origin policy
+	//bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	r.ParseForm()
 
-	if !doKeysExist(r.Form, []string{"phoneNumber", "latitude", "longitude", "phrase"}) && areFieldsEmpty(r.Form ,[]string{"phoneNumber", "latitude", "longitude", "phrase"}) {
+	if !doKeysExist(r.Form, []string{"phoneNumber", "latitude", "longitude", "phrase"}) && areFieldsEmpty(r.Form, []string{"phoneNumber", "latitude", "longitude", "phrase"}) {
 		log.Println("required http parameters not found for newPickup")
 	}
 
@@ -161,17 +161,17 @@ func newPickup(w http.ResponseWriter, r *http.Request) {
 	var location Location
 
 	/*
-	number, err := strconv.Atoi(r.Form["phoneNumber"][0]);
-	if  err != nil {
-		log.Println(err)
-	}
+		number, err := strconv.Atoi(r.Form["phoneNumber"][0]);
+		if  err != nil {
+			log.Println(err)
+		}
 	*/
 
 	number = r.Form["phoneNumber"][0]
 	devicePhrase = r.Form["phrase"][0]
 
-	lat, err := strconv.ParseFloat(r.Form["latitude"][0], 64);
-	lon, err := strconv.ParseFloat(r.Form["longitude"][0], 64);
+	lat, err := strconv.ParseFloat(r.Form["latitude"][0], 64)
+	lon, err := strconv.ParseFloat(r.Form["longitude"][0], 64)
 
 	if err != nil {
 		log.Println(err)
@@ -181,7 +181,7 @@ func newPickup(w http.ResponseWriter, r *http.Request) {
 
 	//if someone else if already using that number and devicePhrase does not match, maybe the user reinstalled the app
 	//we want to allow the same device to continue using the phoneNumber if the app relaunched
-	if pickups[number].Status != 0 && pickups[number].devicePhrase != "" && pickups[number].devicePhrase != devicePhrase{
+	if pickups[number].Status != 0 && pickups[number].devicePhrase != "" && pickups[number].devicePhrase != devicePhrase {
 		fmt.Fprintf(w, failResponse)
 		return
 	}
@@ -202,17 +202,17 @@ func newPickup(w http.ResponseWriter, r *http.Request) {
 
 func getPickupInfo(w http.ResponseWriter, r *http.Request) {
 	/*
-	//Disable logging for getPickupInfo for brevity
-	log.Println("getPickupInfo()")
+		//Disable logging for getPickupInfo for brevity
+		log.Println("getPickupInfo()")
 	*/
 
-    //bypass same origin policy
+	//bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	//parse http parameters
 	r.ParseForm()
 
-	if !doKeysExist(r.Form, []string{"phoneNumber", "latitude", "longitude", "phrase"}) && areFieldsEmpty(r.Form ,[]string{"phoneNumber", "latitude", "longitude", "phrase"}) {
+	if !doKeysExist(r.Form, []string{"phoneNumber", "latitude", "longitude", "phrase"}) && areFieldsEmpty(r.Form, []string{"phoneNumber", "latitude", "longitude", "phrase"}) {
 		log.Println("required http parameters not found for getPickupInfo")
 	}
 
@@ -250,7 +250,7 @@ func getPickupInfo(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, string(output[:]))
 
 		//UPDATE pickup location in inprogress table
-		serialChannel <- func() { databaseUpdatePickupLatestLocationInCurrentTable(number, location, time.Now())}
+		serialChannel <- func() { databaseUpdatePickupLatestLocationInCurrentTable(number, location, time.Now()) }
 	} else {
 		log.Println(err)
 	}
@@ -258,8 +258,8 @@ func getPickupInfo(w http.ResponseWriter, r *http.Request) {
 
 func getVanLocations(w http.ResponseWriter, r *http.Request) {
 	/*
-	//Disabled logging of getVanLocations for brevity
-	log.Println("getVanLocations()")
+		//Disabled logging of getVanLocations for brevity
+		log.Println("getVanLocations()")
 	*/
 
 	//bypass same origin policy
@@ -276,13 +276,13 @@ func getVanLocations(w http.ResponseWriter, r *http.Request) {
 func cancelPickup(w http.ResponseWriter, r *http.Request) {
 	log.Println("cancelPickup()")
 
-    //bypass same origin policy
+	//bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	//parse http parameters
 	r.ParseForm()
 
-	if !doKeysExist(r.Form, []string{"phoneNumber", "phrase"}) && areFieldsEmpty(r.Form ,[]string{"phoneNumber", "phrase"}) {
+	if !doKeysExist(r.Form, []string{"phoneNumber", "phrase"}) && areFieldsEmpty(r.Form, []string{"phoneNumber", "phrase"}) {
 		log.Println("required http parameters not found for getPickupInfo")
 	}
 
@@ -292,7 +292,7 @@ func cancelPickup(w http.ResponseWriter, r *http.Request) {
 
 	//check passphrase in "phrase" parameter
 	if !isDriverPhraseCorrect(r.Form) {
-		if r.Form["phrase"][0] != pickups[number].devicePhrase && pickups[number].devicePhrase != ""{
+		if r.Form["phrase"][0] != pickups[number].devicePhrase && pickups[number].devicePhrase != "" {
 			fmt.Fprintf(w, wrongPasswordResponse)
 			return
 		}
@@ -304,16 +304,15 @@ func cancelPickup(w http.ResponseWriter, r *http.Request) {
 	//serialChannel <- func() { databaseUpdatePickupStatusInCurrentTable(number, canceled) } //canceled status (5) only shown in database, server app structs will never see it
 	serialChannel <- func() { databaseInsertPickupInPastTable(tmp) }
 	serialChannel <- func() { databaseDeletePickupInCurrentTable(number) }
-	
+
 	//do database before updating structin memory to preserve device phrase
 	tmp.Status = inactive
 	tmp.LatestTime = time.Now()
 	tmp.devicePhrase = ""
 	pickups[number] = tmp
 
-	fmt.Fprintf(w, successResponse);
+	fmt.Fprintf(w, successResponse)
 
-	
 }
 
 func getPickupList(w http.ResponseWriter, r *http.Request) {
@@ -339,9 +338,9 @@ func getPickupList(w http.ResponseWriter, r *http.Request) {
 }
 
 func confirmPickup(w http.ResponseWriter, r *http.Request) {
-    log.Println("confirmPickup()")
+	log.Println("confirmPickup()")
 
-    //bypass same origin policy
+	//bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	//parse http parameters
@@ -353,7 +352,7 @@ func confirmPickup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !doKeysExist(r.Form, []string{"phoneNumber"}) && areFieldsEmpty(r.Form ,[]string{"phoneNumber"}) {
+	if !doKeysExist(r.Form, []string{"phoneNumber"}) && areFieldsEmpty(r.Form, []string{"phoneNumber"}) {
 		log.Println("required http parameters not found for confirmPickup")
 	}
 
@@ -368,7 +367,7 @@ func confirmPickup(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Fprintf(w, successResponse)
 
-	serialChannel <- func() { databaseUpdatePickupStatusInCurrentTable(number, confirmed)}
+	serialChannel <- func() { databaseUpdatePickupStatusInCurrentTable(number, confirmed) }
 }
 
 func completePickup(w http.ResponseWriter, r *http.Request) {
@@ -386,7 +385,7 @@ func completePickup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !doKeysExist(r.Form, []string{"phoneNumber"}) && areFieldsEmpty(r.Form ,[]string{"phoneNumber"}) {
+	if !doKeysExist(r.Form, []string{"phoneNumber"}) && areFieldsEmpty(r.Form, []string{"phoneNumber"}) {
 		log.Println("required http parameters not found for completePickup")
 	}
 
@@ -517,15 +516,15 @@ func updateVanLocation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !doKeysExist(r.Form, []string{"vanNumber", "latitude", "longitude"}) && areFieldsEmpty(r.Form ,[]string{"vanNumber", "latitude", "longitude"}) {
+	if !doKeysExist(r.Form, []string{"vanNumber", "latitude", "longitude"}) && areFieldsEmpty(r.Form, []string{"vanNumber", "latitude", "longitude"}) {
 		log.Println("required http parameters not found for updateVanLocation")
 	}
 
 	var vanNumber int
 	var location Location
 
-	vanNumber, err := strconv.Atoi(r.Form["vanNumber"][0]);
-	if  err != nil {
+	vanNumber, err := strconv.Atoi(r.Form["vanNumber"][0])
+	if err != nil {
 		log.Println(err)
 	}
 
@@ -539,16 +538,16 @@ func updateVanLocation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lat, err := strconv.ParseFloat(r.Form["latitude"][0], 64);
-	lon, err := strconv.ParseFloat(r.Form["longitude"][0], 64);
+	lat, err := strconv.ParseFloat(r.Form["latitude"][0], 64)
+	lon, err := strconv.ParseFloat(r.Form["longitude"][0], 64)
 	if err != nil {
 		log.Println(err)
 	} else {
 		location = Location{Latitude: lat, Longitude: lon}
 	}
 
-	if doKeysExist(r.Form, []string{"heading"}) && !areFieldsEmpty(r.Form ,[]string{"heading"}) {
-		heading, err := strconv.ParseFloat(r.Form["heading"][0], 64);
+	if doKeysExist(r.Form, []string{"heading"}) && !areFieldsEmpty(r.Form, []string{"heading"}) {
+		heading, err := strconv.ParseFloat(r.Form["heading"][0], 64)
 		if err != nil {
 			log.Println(err)
 		} else {
@@ -562,12 +561,12 @@ func updateVanLocation(w http.ResponseWriter, r *http.Request) {
 		vanLocations = append(vanLocations, Location{})
 	}
 
-	vanLocations[vanNumber - 1] = location
+	vanLocations[vanNumber-1] = location
 
-	vanLocations[vanNumber - 1].latestTime = time.Now()
+	vanLocations[vanNumber-1].latestTime = time.Now()
 
 	//reply with van location on server
-	if output, err := json.Marshal(vanLocations[vanNumber - 1]); err == nil {
+	if output, err := json.Marshal(vanLocations[vanNumber-1]); err == nil {
 		fmt.Fprintf(w, string(output[:]))
 	} else {
 		log.Println(err)
@@ -594,13 +593,13 @@ func server(wg *sync.WaitGroup) {
 	http.HandleFunc("/updateVanLocation", updateVanLocation)
 
 	//bind to $PORT environment variable
-  err := http.ListenAndServe(":"+os.Getenv("PORT"), nil) 
-  fmt.Println("Listening on " + os.Getenv("PORT"))
-  if err != nil {
-    log.Println(err)
-  } 
+	err := http.ListenAndServe(":"+os.Getenv("PORT"), nil)
+	fmt.Println("Listening on " + os.Getenv("PORT"))
+	if err != nil {
+		log.Println(err)
+	}
 
-  wg.Done()
+	wg.Done()
 }
 
 //anything that is not inactive is set to inactive
@@ -616,7 +615,7 @@ func removeInactivePickups(targetMap *map[string]Pickup, timeDifference time.Dur
 			serialChannel <- func() { databaseUpdatePickupStatusInCurrentTable(v.PhoneNumber, inactive) }
 			serialChannel <- func() { databaseInsertPickupInPastTable(v) }
 			serialChannel <- func() { databaseDeletePickupInCurrentTable(v.PhoneNumber) }
-				}
+		}
 	}
 }
 
@@ -624,7 +623,7 @@ func removeInactiveVanLocations(targetArray []Location, timeDifference time.Dura
 	var numberOfEmptyLocations int
 
 	for i := 0; i < len(targetArray); i++ {
-		
+
 		if (targetArray[i].latestTime != time.Time{} && time.Since((targetArray)[i].latestTime) > timeDifference) {
 			fmt.Println(time.Since((targetArray)[i].latestTime))
 			fmt.Println(timeDifference)
@@ -649,8 +648,8 @@ func checkForInactive(wg *sync.WaitGroup) {
 	t := time.NewTicker(time.Duration(10) * time.Second)
 	for now := range t.C {
 		now = now
-		go removeInactivePickups(&pickups, time.Duration(10) * time.Minute)
-		go removeInactiveVanLocations(vanLocations, time.Duration(1) * time.Minute)
+		go removeInactivePickups(&pickups, time.Duration(10)*time.Minute)
+		go removeInactiveVanLocations(vanLocations, time.Duration(1)*time.Minute)
 	}
 	wg.Done()
 }
@@ -683,33 +682,33 @@ func setupCurrentDatabase() {
 				}
 
 				/*
-				//Currently no way to handle a column that can be time.Time or NULL
+					//Currently no way to handle a column that can be time.Time or NULL
 
-				var tmpConfirmTime sql.NullString
-				var tmpCompleteTime sql.NullString
+					var tmpConfirmTime sql.NullString
+					var tmpCompleteTime sql.NullString
 
-				layout := "2016-01-19 22:25:13.047371"
-				if tmpConfirmTime.Valid {
-					timeStamp, err := time.Parse(layout, tmpConfirmTime.String)
-					if err != nil {
-						tmpPickup.ConfirmTime = timeStamp
+					layout := "2016-01-19 22:25:13.047371"
+					if tmpConfirmTime.Valid {
+						timeStamp, err := time.Parse(layout, tmpConfirmTime.String)
+						if err != nil {
+							tmpPickup.ConfirmTime = timeStamp
+						} else {
+							tmpPickup.ConfirmTime = time.Time{}
+						}
 					} else {
 						tmpPickup.ConfirmTime = time.Time{}
 					}
-				} else {
-					tmpPickup.ConfirmTime = time.Time{}
-				}
 
-				if tmpCompleteTime.Valid {
-					timeStamp, err := time.Parse(layout, tmpCompleteTime.String)
-					if err != nil {
-						tmpPickup.CompleteTime = timeStamp
+					if tmpCompleteTime.Valid {
+						timeStamp, err := time.Parse(layout, tmpCompleteTime.String)
+						if err != nil {
+							tmpPickup.CompleteTime = timeStamp
+						} else {
+							tmpPickup.CompleteTime = time.Time{}
+						}
 					} else {
 						tmpPickup.CompleteTime = time.Time{}
 					}
-				} else {
-					tmpPickup.CompleteTime = time.Time{}
-				}
 				*/
 				fmt.Printf("Loaded existing pickup for %v\n", tmpPickup.PhoneNumber)
 				pickups[tmpPickup.PhoneNumber] = tmpPickup
@@ -767,11 +766,11 @@ func main() {
 		}
 	}()
 	/*
-	//test the serialChannel
-	serialChannel <- func() { log.Println("i=1")}
-	serialChannel <- func() { log.Println("i=2")}
-	serialChannel <- func() { log.Println("i=3")}
-	serialChannel <- func() { log.Println("i=4")}
+		//test the serialChannel
+		serialChannel <- func() { log.Println("i=1")}
+		serialChannel <- func() { log.Println("i=2")}
+		serialChannel <- func() { log.Println("i=3")}
+		serialChannel <- func() { log.Println("i=4")}
 	*/
 
 	var wg sync.WaitGroup
@@ -779,10 +778,10 @@ func main() {
 
 	go server(&wg)
 	//go checkForInactive(&wg)
-	
+
 	/*
-	result, err = db.Exec("INSERT INTO inprogress (PhoneNumber, DeviceId, InitialLatitude, InitialLongitude, InitialTime, LatestLatitude, LatestLongitude, LatestTime, ConfirmTime, CompleteTime, Status) VALUES ('5103868680', '68753A44-4D6F-1226-9C60-0050E4C00067', 38.9844, 76.4889, '2002-10-02T10:00:00-05:00', 38.9844, 76.4889, '2002-10-02T10:00:00-05:00', DEFAULT, DEFAULT, 0); ")
-	fmt.Println(result)
+		result, err = db.Exec("INSERT INTO inprogress (PhoneNumber, DeviceId, InitialLatitude, InitialLongitude, InitialTime, LatestLatitude, LatestLongitude, LatestTime, ConfirmTime, CompleteTime, Status) VALUES ('5103868680', '68753A44-4D6F-1226-9C60-0050E4C00067', 38.9844, 76.4889, '2002-10-02T10:00:00-05:00', 38.9844, 76.4889, '2002-10-02T10:00:00-05:00', DEFAULT, DEFAULT, 0); ")
+		fmt.Println(result)
 	*/
 
 	setupCurrentDatabase()
