@@ -31,7 +31,7 @@ const inactive int = 0
 const canceled int = 5 //only used when copying into pastPickups table
 
 type Pickup struct {
-	PhoneNumber     string `json:"phoneNumber"`
+	PhoneNumber     string    `json:"phoneNumber"`
 	devicePhrase    string
 	InitialLocation Location  `json:"initialLocation"`
 	InitialTime     time.Time `json:"initialTime"`
@@ -40,6 +40,7 @@ type Pickup struct {
 	ConfirmTime     time.Time `json:"confirmTime"`
 	CompleteTime    time.Time `json:"completeTime"`
 	Status          int       `json:"status"`
+	version         int
 }
 
 var pickups map[string]Pickup
@@ -186,7 +187,7 @@ func newPickup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tmp := Pickup{number, devicePhrase, location, time.Now(), location, time.Now(), time.Time{}, time.Time{}, pending}
+	tmp := Pickup{number, devicePhrase, location, time.Now(), location, time.Now(), time.Time{}, time.Time{}, pending, 0}
 
 	pickups[number] = tmp
 
@@ -250,7 +251,7 @@ func getPickupInfo(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, string(output[:]))
 
 		//UPDATE pickup location in inprogress table
-		serialChannel <- func() { databaseUpdatePickupLatestLocationInCurrentTable(number, location, time.Now()) }
+		serialChannel <- func() { databaseUpdatePickupLatestLocationInCurrentTable(pickups[number]) }
 	} else {
 		log.Println(err)
 	}
@@ -303,7 +304,7 @@ func cancelPickup(w http.ResponseWriter, r *http.Request) {
 	//perform INSERT, DELETE in order
 	//serialChannel <- func() { databaseUpdatePickupStatusInCurrentTable(number, canceled) } //canceled status (5) only shown in database, server app structs will never see it
 	serialChannel <- func() { databaseInsertPickupInPastTable(tmp) }
-	serialChannel <- func() { databaseDeletePickupInCurrentTable(number) }
+	serialChannel <- func() { databaseDeletePickupInCurrentTable(tmp) }
 
 	//do database before updating structin memory to preserve device phrase
 	tmp.Status = inactive
@@ -367,7 +368,7 @@ func confirmPickup(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Fprintf(w, successResponse)
 
-	serialChannel <- func() { databaseUpdatePickupStatusInCurrentTable(number, confirmed) }
+	serialChannel <- func() { databaseUpdatePickupStatusInCurrentTable(tmp, confirmed) }
 }
 
 func completePickup(w http.ResponseWriter, r *http.Request) {
@@ -401,103 +402,114 @@ func completePickup(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, successResponse)
 
 	//perform UPDATE, INSERT, DELETE in order
-	serialChannel <- func() { databaseUpdatePickupStatusInCurrentTable(number, completed) }
+	serialChannel <- func() { databaseUpdatePickupStatusInCurrentTable(tmp, completed) }
 	serialChannel <- func() { databaseInsertPickupInPastTable(tmp) }
-	serialChannel <- func() { databaseDeletePickupInCurrentTable(number) }
+	serialChannel <- func() { databaseDeletePickupInCurrentTable(tmp) }
+}
+
+//Check *(sql.DB) handle initialized and connected
+func checkDatabaseHandleValid(targetHandle *(sql.DB)) bool {
+	if db != nil {
+		if err := db.Ping(); err == nil {
+			return true
+		} else {
+			fmt.Println("DB ping failed.")
+		}
+	} else {
+		log.Println("DB handle is nil")
+	}
+	return false
+}
+
+//Determine if update has failed due to holding onto stale record and update memory
+func updateIfStale(targetResult sql.Result, targetTable string, targetPhoneNumber string) {
+	//If rows affected is 0, then NO row with the request "version" was found. Likely another instance has modifed it already.
+	if rowsAffected, _ := targetResult.RowsAffected(); rowsAffected == 0 { //Stop, get most recent version of table
+		log.Printf("%v rows affected. Instance had a stale entry. Load current pickups from database into memory.", rowsAffected)
+		if rows := selectRowsFromTable(targetTable); rows != nil {
+				loadPickupRowsIntoMemory(rows)
+			} else {
+				log.Println("selectRowsFromTable returned nil object")
+			}
+	} else {
+		var tmp = pickups[targetPhoneNumber]
+		tmp.version = tmp.version+1
+		pickups[targetPhoneNumber] = tmp
+		log.Printf("OK - %v version incremented to %v", targetPhoneNumber, tmp.version)
+	}
 }
 
 //INSERT new pickup row in inprogress table
 func databaseInsertPickupInCurrentTable(targetPickup Pickup) {
-	if db != nil {
-		if err := db.Ping(); err == nil {
-			var result sql.Result
-			if result, err = db.Exec("INSERT INTO inprogress (PhoneNumber, DeviceId, InitialLatitude, InitialLongitude, InitialTime, LatestLatitude, LatestLongitude, LatestTime, ConfirmTime, CompleteTime, Status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);", targetPickup.PhoneNumber, targetPickup.devicePhrase, targetPickup.InitialLocation.Latitude, targetPickup.InitialLocation.Longitude, targetPickup.InitialTime, targetPickup.LatestLocation.Latitude, targetPickup.LatestLocation.Longitude, targetPickup.LatestTime, targetPickup.ConfirmTime, targetPickup.CompleteTime, targetPickup.Status); err != nil {
-				log.Println(err)
-			} else {
-				rowsAffected, _ := result.RowsAffected()
-				fmt.Printf("INSERT %v rows affected for databaseInsertPickupInCurrentTable()\n", rowsAffected)
-			}
+	if checkDatabaseHandleValid(db) {
+		var result sql.Result
+		var err error
+		if result, err = db.Exec("INSERT INTO inprogress (PhoneNumber, DeviceId, InitialLatitude, InitialLongitude, InitialTime, LatestLatitude, LatestLongitude, LatestTime, ConfirmTime, CompleteTime, Status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);", targetPickup.PhoneNumber, targetPickup.devicePhrase, targetPickup.InitialLocation.Latitude, targetPickup.InitialLocation.Longitude, targetPickup.InitialTime, targetPickup.LatestLocation.Latitude, targetPickup.LatestLocation.Longitude, targetPickup.LatestTime, targetPickup.ConfirmTime, targetPickup.CompleteTime, targetPickup.Status); err != nil {
+			log.Println(err)
 		} else {
-			fmt.Println("DB ping failed.")
+			rowsAffected, _ := result.RowsAffected()
+			fmt.Printf("INSERT %v rows affected for databaseInsertPickupInCurrentTable()\n", rowsAffected)
 		}
-	} else {
-		log.Println("DB handle is nil")
-	}
+	}		
 }
 
 //UPDATE pickup status in inprogress table
-func databaseUpdatePickupStatusInCurrentTable(targetPhoneNumber string, targetStatus int) {
-	if db != nil {
-		if err := db.Ping(); err == nil {
-			var result sql.Result
-			if result, err = db.Exec("UPDATE inprogress SET Status = $1 WHERE PhoneNumber = $2;", targetStatus, targetPhoneNumber); err != nil {
-				log.Println(err)
-			} else {
-				rowsAffected, _ := result.RowsAffected()
-				fmt.Printf("UPDATE %v rows affected for databaseUpdatePickupStatusInCurrentTable()\n", rowsAffected)
-			}
+func databaseUpdatePickupStatusInCurrentTable(targetPickup Pickup, newStatus int) {
+	if checkDatabaseHandleValid(db) {
+		var result sql.Result
+		var err error
+		if result, err = db.Exec("UPDATE inprogress SET Status = $1, Version = $4 WHERE PhoneNumber = $2 AND Version = $3;", newStatus, targetPickup.PhoneNumber, targetPickup.version, targetPickup.version+1); err != nil {
+			log.Println(err)
 		} else {
-			fmt.Println("DB ping failed.")
+			rowsAffected, _ := result.RowsAffected()
+			fmt.Printf("UPDATE %v rows affected for databaseUpdatePickupStatusInCurrentTable()\n", rowsAffected)
+			updateIfStale(result, "inprogress", targetPickup.PhoneNumber)
 		}
-	} else {
-		log.Println("DB handle is nil")
 	}
 }
 
 //UPDATE pickup latestLocation in inprogress table
-func databaseUpdatePickupLatestLocationInCurrentTable(targetPhoneNumber string, targetLatestLocation Location, targetTime time.Time) {
-	if db != nil {
-		if err := db.Ping(); err == nil {
-			var result sql.Result
-			if result, err = db.Exec("UPDATE inprogress SET LatestLatitude = $1, LatestLongitude = $2, LatestTime = $3 WHERE PhoneNumber = $4;", targetLatestLocation.Latitude, targetLatestLocation.Longitude, targetTime, targetPhoneNumber); err != nil {
-				log.Println(err)
-			} else {
-				rowsAffected, _ := result.RowsAffected()
-				fmt.Printf("UPDATE %v rows affected for databaseUpdatePickupLatestLocationInCurrentTable()\n", rowsAffected)
-			}
+func databaseUpdatePickupLatestLocationInCurrentTable(targetPickup Pickup) {
+	if checkDatabaseHandleValid(db) {
+		var result sql.Result
+		var err error
+		if result, err = db.Exec("UPDATE inprogress SET LatestLatitude = $1, LatestLongitude = $2, LatestTime = $3, Version = $6 WHERE PhoneNumber = $4 AND Version = $5;", targetPickup.LatestLocation.Latitude, targetPickup.LatestLocation.Longitude, targetPickup.LatestTime, targetPickup.PhoneNumber, targetPickup.version, targetPickup.version+1); err != nil {
+			log.Println(err)
 		} else {
-			fmt.Println("DB ping failed.")
+			rowsAffected, _ := result.RowsAffected()
+			fmt.Printf("UPDATE %v rows affected for databaseUpdatePickupLatestLocationInCurrentTable()\n", rowsAffected)
+			updateIfStale(result, "inprogress", targetPickup.PhoneNumber)
 		}
-	} else {
-		log.Println("DB handle is nil")
 	}
 }
 
 //Copy over to pastpickups table and call function to delete from inprogress table
 func databaseInsertPickupInPastTable(targetPickup Pickup) {
-	if db != nil {
-		if err := db.Ping(); err == nil {
-			var result sql.Result
-			if result, err = db.Exec("INSERT INTO pastpickups (PhoneNumber, DeviceId, InitialLatitude, InitialLongitude, InitialTime, LatestLatitude, LatestLongitude, LatestTime, ConfirmTime, CompleteTime, Status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);", targetPickup.PhoneNumber, targetPickup.devicePhrase, targetPickup.InitialLocation.Latitude, targetPickup.InitialLocation.Longitude, targetPickup.InitialTime, targetPickup.LatestLocation.Latitude, targetPickup.LatestLocation.Longitude, targetPickup.LatestTime, targetPickup.ConfirmTime, targetPickup.CompleteTime, targetPickup.Status); err != nil {
-				log.Println(err)
-			} else {
-				rowsAffected, _ := result.RowsAffected()
-				fmt.Printf("INSERT %v rows affected for databaseInsertPickupInPastTable()\n", rowsAffected)
-			}
+	if checkDatabaseHandleValid(db) {
+		var result sql.Result
+		var err error
+		if result, err = db.Exec("INSERT INTO pastpickups (PhoneNumber, DeviceId, InitialLatitude, InitialLongitude, InitialTime, LatestLatitude, LatestLongitude, LatestTime, ConfirmTime, CompleteTime, Status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);", targetPickup.PhoneNumber, targetPickup.devicePhrase, targetPickup.InitialLocation.Latitude, targetPickup.InitialLocation.Longitude, targetPickup.InitialTime, targetPickup.LatestLocation.Latitude, targetPickup.LatestLocation.Longitude, targetPickup.LatestTime, targetPickup.ConfirmTime, targetPickup.CompleteTime, targetPickup.Status); err != nil {
+			log.Println(err)
 		} else {
-			fmt.Println("DB ping failed.")
+			rowsAffected, _ := result.RowsAffected()
+			fmt.Printf("INSERT %v rows affected for databaseInsertPickupInPastTable()\n", rowsAffected)
+			updateIfStale(result, "inprogress", targetPickup.PhoneNumber)
 		}
-	} else {
-		log.Println("DB handle is nil")
 	}
 }
 
 //DELETE pickup from inprogress table
-func databaseDeletePickupInCurrentTable(targetPhoneNumber string) {
-	if db != nil {
-		if err := db.Ping(); err == nil {
-			var result sql.Result
-			if result, err = db.Exec("DELETE FROM inprogress WHERE PhoneNumber = $1;", targetPhoneNumber); err != nil {
-				log.Println(err)
-			} else {
-				rowsAffected, _ := result.RowsAffected()
-				fmt.Printf("DELETE %v rows affected for databaseDeletePickupInCurrentTable()\n", rowsAffected)
-			}
+func databaseDeletePickupInCurrentTable(targetPickup Pickup) {
+	if checkDatabaseHandleValid(db) {
+		var result sql.Result
+		var err error
+		if result, err = db.Exec("DELETE FROM inprogress WHERE PhoneNumber = $1 AND Version = $2;", targetPickup.PhoneNumber, targetPickup.version); err != nil {
+			log.Println(err)
 		} else {
-			fmt.Println("DB ping failed.")
+			rowsAffected, _ := result.RowsAffected()
+			fmt.Printf("DELETE %v rows affected for databaseDeletePickupInCurrentTable()\n", rowsAffected)
+			updateIfStale(result, "inprogress", targetPickup.PhoneNumber)
 		}
-	} else {
-		log.Println("DB handle is nil")
 	}
 }
 
@@ -612,9 +624,9 @@ func removeInactivePickups(targetMap *map[string]Pickup, timeDifference time.Dur
 			(*targetMap)[k] = v
 
 			//perform UPDATE, INSERT, DELETE in order
-			serialChannel <- func() { databaseUpdatePickupStatusInCurrentTable(v.PhoneNumber, inactive) }
+			serialChannel <- func() { databaseUpdatePickupStatusInCurrentTable(v, inactive) }
 			serialChannel <- func() { databaseInsertPickupInPastTable(v) }
-			serialChannel <- func() { databaseDeletePickupInCurrentTable(v.PhoneNumber) }
+			serialChannel <- func() { databaseDeletePickupInCurrentTable(v) }
 		}
 	}
 }
@@ -645,13 +657,76 @@ func removeInactiveVanLocations(targetArray []Location, timeDifference time.Dura
 }
 
 func checkForInactive(wg *sync.WaitGroup) {
-	t := time.NewTicker(time.Duration(10) * time.Second)
+	t := time.NewTicker(time.Duration(30) * time.Second)
 	for now := range t.C {
 		now = now
-		go removeInactivePickups(&pickups, time.Duration(10)*time.Minute)
-		go removeInactiveVanLocations(vanLocations, time.Duration(1)*time.Minute)
+		go removeInactivePickups(&pickups, time.Duration(120)*time.Minute)
+		go removeInactiveVanLocations(vanLocations, time.Duration(10)*time.Minute)
 	}
 	wg.Done()
+}
+
+//Get updated table from database and return *(sql.Rows)
+func selectRowsFromTable(targetTable string) *(sql.Rows) {
+	//we construct the SELECT query in Go because SQL does not support ordinal marker for table names
+	query := fmt.Sprintf("SELECT * from %v;", targetTable)
+	rows, err := db.Query(query)
+	log.Println(targetTable)
+	log.Println("point3")
+	if err != nil {
+		log.Println(err)
+	} else {
+		return rows
+	}
+	return nil
+}
+
+//Scan a passed in *(sql.Rows) and load into memory
+func loadPickupRowsIntoMemory(targetRows *(sql.Rows)) {
+	var countOfRows = 0
+	for targetRows.Next() {
+		var pickupId int
+		var tmpPickup Pickup
+
+		if err := targetRows.Scan(&pickupId, &tmpPickup.PhoneNumber, &tmpPickup.devicePhrase, &tmpPickup.InitialLocation.Latitude, &tmpPickup.InitialLocation.Longitude, &tmpPickup.InitialTime, &tmpPickup.LatestLocation.Latitude, &tmpPickup.LatestLocation.Longitude, &tmpPickup.LatestTime, &tmpPickup.ConfirmTime, &tmpPickup.CompleteTime, &tmpPickup.Status, &tmpPickup.version); err != nil {
+			log.Println(err)
+		}
+
+		/*
+			//Currently no built in  database/sql way to handle a column that can be time.Time or NULL. Need to write own method at some point.
+
+			var tmpConfirmTime sql.NullString
+			var tmpCompleteTime sql.NullString
+
+			layout := "2016-01-19 22:25:13.047371"
+			if tmpConfirmTime.Valid {
+				timeStamp, err := time.Parse(layout, tmpConfirmTime.String)
+				if err != nil {
+					tmpPickup.ConfirmTime = timeStamp
+				} else {
+					tmpPickup.ConfirmTime = time.Time{}
+				}
+			} else {
+				tmpPickup.ConfirmTime = time.Time{}
+			}
+
+			if tmpCompleteTime.Valid {
+				timeStamp, err := time.Parse(layout, tmpCompleteTime.String)
+				if err != nil {
+					tmpPickup.CompleteTime = timeStamp
+				} else {
+					tmpPickup.CompleteTime = time.Time{}
+				}
+			} else {
+				tmpPickup.CompleteTime = time.Time{}
+			}
+		*/
+		fmt.Printf("Loaded existing pickup for %v\n", tmpPickup.PhoneNumber)
+		pickups[tmpPickup.PhoneNumber] = tmpPickup
+		countOfRows++
+	}
+	targetRows.Close()
+	log.Printf("Finished loading %v pickups.\n", countOfRows)
 }
 
 func setupCurrentDatabase() {
@@ -668,58 +743,15 @@ func setupCurrentDatabase() {
 	}
 	if tableExist { //load in inprogress pickups from database
 		go func() {
-			rows, err := db.Query("SELECT * from inprogress;")
-			if err != nil {
-				log.Println(err)
+			log.Println("point1")
+			if rows := selectRowsFromTable("inprogress"); rows != nil {
+				loadPickupRowsIntoMemory(rows)
+			} else {
+				log.Println("selectRowsFromTable returned nil object")
 			}
-			var countOfRows = 0
-			for rows.Next() {
-				var pickupId int
-				var tmpPickup Pickup
-
-				if err := rows.Scan(&pickupId, &tmpPickup.PhoneNumber, &tmpPickup.devicePhrase, &tmpPickup.InitialLocation.Latitude, &tmpPickup.InitialLocation.Longitude, &tmpPickup.InitialTime, &tmpPickup.LatestLocation.Latitude, &tmpPickup.LatestLocation.Longitude, &tmpPickup.LatestTime, &tmpPickup.ConfirmTime, &tmpPickup.CompleteTime, &tmpPickup.Status); err != nil {
-					log.Println(err)
-				}
-
-				/*
-					//Currently no way to handle a column that can be time.Time or NULL
-
-					var tmpConfirmTime sql.NullString
-					var tmpCompleteTime sql.NullString
-
-					layout := "2016-01-19 22:25:13.047371"
-					if tmpConfirmTime.Valid {
-						timeStamp, err := time.Parse(layout, tmpConfirmTime.String)
-						if err != nil {
-							tmpPickup.ConfirmTime = timeStamp
-						} else {
-							tmpPickup.ConfirmTime = time.Time{}
-						}
-					} else {
-						tmpPickup.ConfirmTime = time.Time{}
-					}
-
-					if tmpCompleteTime.Valid {
-						timeStamp, err := time.Parse(layout, tmpCompleteTime.String)
-						if err != nil {
-							tmpPickup.CompleteTime = timeStamp
-						} else {
-							tmpPickup.CompleteTime = time.Time{}
-						}
-					} else {
-						tmpPickup.CompleteTime = time.Time{}
-					}
-				*/
-				fmt.Printf("Loaded existing pickup for %v\n", tmpPickup.PhoneNumber)
-				pickups[tmpPickup.PhoneNumber] = tmpPickup
-				countOfRows++
-			}
-			rows.Close()
-			log.Printf("Finished loading %v pickups.\n", countOfRows)
 		}()
-
 	} else { //create new inprogress database
-		if _, err = db.Exec("CREATE TABLE inprogress (PickupId SERIAL,PhoneNumber CHAR(10) NOT NULL,DeviceId VARCHAR(36) NOT NULL,InitialLatitude REAL NOT NULL,InitialLongitude REAL NOT NULL,InitialTime TIMESTAMP NOT NULL,LatestLatitude REAL NOT NULL,LatestLongitude REAL NOT NULL,LatestTime TIMESTAMP NOT NULL,ConfirmTime TIMESTAMP NOT NULL,CompleteTime TIMESTAMP NOT NULL,Status INT NOT NULL,CONSTRAINT PK_PickupIdInProgress PRIMARY KEY (PickupId),CONSTRAINT Check_PhoneNumber CHECK (CHAR_LENGTH(PhoneNumber) = 10));"); err != nil {
+		if _, err = db.Exec("CREATE TABLE inprogress (PickupId SERIAL,PhoneNumber CHAR(10) NOT NULL,DeviceId VARCHAR(36) NOT NULL,InitialLatitude REAL NOT NULL,InitialLongitude REAL NOT NULL,InitialTime TIMESTAMP NOT NULL,LatestLatitude REAL NOT NULL,LatestLongitude REAL NOT NULL,LatestTime TIMESTAMP NOT NULL,ConfirmTime TIMESTAMP NOT NULL,CompleteTime TIMESTAMP NOT NULL,Status INT NOT NULL,Version INT NOT NULL DEFAULT 0,CONSTRAINT PK_PickupIdInProgress PRIMARY KEY (PickupId),CONSTRAINT Check_PhoneNumber CHECK (CHAR_LENGTH(PhoneNumber) = 10));"); err != nil {
 			log.Println(err)
 		} else {
 			log.Println("CREATE TABLE inprogress executed\n")
@@ -740,7 +772,7 @@ func setupPastDatabase() {
 		log.Println(err)
 	}
 	if !tableExist {
-		if _, err = db.Exec("CREATE TABLE pastpickups (PickupId SERIAL,PhoneNumber CHAR(10) NOT NULL,DeviceId VARCHAR(36) NOT NULL,InitialLatitude REAL NOT NULL,InitialLongitude REAL NOT NULL,InitialTime TIMESTAMP NOT NULL,LatestLatitude REAL NOT NULL,LatestLongitude REAL NOT NULL,LatestTime TIMESTAMP NOT NULL,ConfirmTime TIMESTAMP NOT NULL,CompleteTime TIMESTAMP NOT NULL,Status INT NOT NULL,CONSTRAINT Check_PhoneNumber CHECK (CHAR_LENGTH(PhoneNumber) = 10));"); err != nil {
+		if _, err = db.Exec("CREATE TABLE pastpickups (PickupId SERIAL,PhoneNumber CHAR(10) NOT NULL,DeviceId VARCHAR(36) NOT NULL,InitialLatitude REAL NOT NULL,InitialLongitude REAL NOT NULL,InitialTime TIMESTAMP NOT NULL,LatestLatitude REAL NOT NULL,LatestLongitude REAL NOT NULL,LatestTime TIMESTAMP NOT NULL,ConfirmTime TIMESTAMP NOT NULL,CompleteTime TIMESTAMP NOT NULL,Status INT NOT NULL,Version INT NOT NULL DEFAULT 0,CONSTRAINT Check_PhoneNumber CHECK (CHAR_LENGTH(PhoneNumber) = 10));"); err != nil {
 			log.Println(err)
 		} else {
 			log.Println("CREATE TABLE pastpickups executed\n")

@@ -1,33 +1,42 @@
 DROP TABLE IF EXISTS inprogress;
 CREATE TABLE inprogress (PickupId SERIAL,
-                       PhoneNumber CHAR(10) NOT NULL,
-                       DeviceId VARCHAR(36) NOT NULL,
-                       InitialLatitude REAL NOT NULL,
-                       InitialLongitude REAL NOT NULL,
-                       InitialTime TIMESTAMP NOT NULL,
-                       LatestLatitude REAL NOT NULL,
-                       LatestLongitude REAL NOT NULL,
-                       LatestTime TIMESTAMP NOT NULL,
-                       ConfirmTime TIMESTAMP NOT NULL,
-                       CompleteTime TIMESTAMP NOT NULL,
-                       Status INT NOT NULL,
-                       CONSTRAINT PK_PickupIdInProgress PRIMARY KEY (PickupId),
-                       CONSTRAINT Check_PhoneNumber CHECK (CHAR_LENGTH(PhoneNumber) = 10));
+ PhoneNumber CHAR(10) NOT NULL,
+ DeviceId VARCHAR(36) NOT NULL,
+ InitialLatitude REAL NOT NULL,
+ InitialLongitude REAL NOT NULL,
+ InitialTime TIMESTAMP NOT NULL,
+ LatestLatitude REAL NOT NULL,
+ LatestLongitude REAL NOT NULL,
+ LatestTime TIMESTAMP NOT NULL,
+ ConfirmTime TIMESTAMP NOT NULL,
+ CompleteTime TIMESTAMP NOT NULL,
+ Status INT NOT NULL,
+ Version INT NOT NULL DEFAULT 0,
+ CONSTRAINT PK_PickupIdInProgress PRIMARY KEY (PickupId),
+ CONSTRAINT Check_PhoneNumber CHECK (CHAR_LENGTH(PhoneNumber) = 10));
 
 DROP TABLE IF EXISTS pastpickups;
 CREATE TABLE pastpickups (PickupId SERIAL,
-                       PhoneNumber CHAR(10) NOT NULL,
-                       DeviceId VARCHAR(36) NOT NULL,
-                       InitialLatitude REAL NOT NULL,
-                       InitialLongitude REAL NOT NULL,
-                       InitialTime TIMESTAMP NOT NULL,
-                       LatestLatitude REAL NOT NULL,
-                       LatestLongitude REAL NOT NULL,
-                       LatestTime TIMESTAMP NOT NULL,
-                       ConfirmTime TIMESTAMP NOT NULL,
-                       CompleteTime TIMESTAMP NOT NULL,
-                       Status INT NOT NULL,
-                       CONSTRAINT Check_PhoneNumber CHECK (CHAR_LENGTH(PhoneNumber) = 10));
+ PhoneNumber CHAR(10) NOT NULL,
+ DeviceId VARCHAR(36) NOT NULL,
+ InitialLatitude REAL NOT NULL,
+ InitialLongitude REAL NOT NULL,
+ InitialTime TIMESTAMP NOT NULL,
+ LatestLatitude REAL NOT NULL,
+ LatestLongitude REAL NOT NULL,
+ LatestTime TIMESTAMP NOT NULL,
+ ConfirmTime TIMESTAMP NOT NULL,
+ CompleteTime TIMESTAMP NOT NULL,
+ Status INT NOT NULL,
+ Version INT NOT NULL DEFAULT 0,
+ CONSTRAINT Check_PhoneNumber CHECK (CHAR_LENGTH(PhoneNumber) = 10));
+
+DROP TABLE IF EXISTS vanlocations;
+CREATE TABLE vanlocations (VanId INT NOT NULL PRIMARY KEY,
+ LatestLatitude REAL NOT NULL,
+ LatestLongitude REAL NOT NULL,
+ LatestTime TIMESTAMP NOT NULL,
+ Version INT NOT NULL DEFAULT 0);
 
 #View public schema tables
 SELECT table_schema,table_name
