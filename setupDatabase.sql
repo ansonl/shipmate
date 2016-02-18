@@ -1,7 +1,6 @@
 DROP TABLE IF EXISTS inprogress;
-CREATE TABLE inprogress (PickupId SERIAL,
- PhoneNumber CHAR(10) NOT NULL,
- DeviceId VARCHAR(36) NOT NULL,
+CREATE TABLE inprogress (PhoneNumber CHAR(10) NOT NULL,
+ DeviceId VARCHAR(36) NOT NULL PRIMARY KEY,
  InitialLatitude REAL NOT NULL,
  InitialLongitude REAL NOT NULL,
  InitialTime TIMESTAMP NOT NULL,
@@ -11,13 +10,11 @@ CREATE TABLE inprogress (PickupId SERIAL,
  ConfirmTime TIMESTAMP NOT NULL,
  CompleteTime TIMESTAMP NOT NULL,
  Status INT NOT NULL,
- Version INT NOT NULL DEFAULT 0,
- CONSTRAINT PK_PickupIdInProgress PRIMARY KEY (PickupId),
+ Version INT NOT NULL DEFAULT 0
  CONSTRAINT Check_PhoneNumber CHECK (CHAR_LENGTH(PhoneNumber) = 10));
 
 DROP TABLE IF EXISTS pastpickups;
-CREATE TABLE pastpickups (PickupId SERIAL,
- PhoneNumber CHAR(10) NOT NULL,
+CREATE TABLE pastpickups (PhoneNumber CHAR(10) NOT NULL,
  DeviceId VARCHAR(36) NOT NULL,
  InitialLatitude REAL NOT NULL,
  InitialLongitude REAL NOT NULL,

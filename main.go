@@ -44,6 +44,7 @@ type Pickup struct {
 }
 
 var pickups map[string]Pickup
+var pickupsLock *sync.RWMutex
 
 var vanLocations []Location
 
@@ -148,6 +149,9 @@ func uptimeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func newPickup(w http.ResponseWriter, r *http.Request) {
+	pickupsLock.Lock()
+	defer pickupsLock.Unlock()
+
 	log.Println("newPickup()")
 	//bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -207,6 +211,9 @@ func getPickupInfo(w http.ResponseWriter, r *http.Request) {
 		log.Println("getPickupInfo()")
 	*/
 
+	pickupsLock.Lock()
+	defer pickupsLock.Unlock()
+
 	//bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
@@ -263,6 +270,9 @@ func getVanLocations(w http.ResponseWriter, r *http.Request) {
 		log.Println("getVanLocations()")
 	*/
 
+	pickupsLock.Lock()
+	defer pickupsLock.Unlock()
+
 	//bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
@@ -275,11 +285,15 @@ func getVanLocations(w http.ResponseWriter, r *http.Request) {
 }
 
 func cancelPickup(w http.ResponseWriter, r *http.Request) {
+	pickupsLock.Lock()
+	defer pickupsLock.Unlock()
+
 	log.Println("cancelPickup()")
 
 	//bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-
+pickupsLock.Lock()
+	defer pickupsLock.Unlock()
 	//parse http parameters
 	r.ParseForm()
 
@@ -317,6 +331,10 @@ func cancelPickup(w http.ResponseWriter, r *http.Request) {
 }
 
 func getPickupList(w http.ResponseWriter, r *http.Request) {
+	//Use RLock which locks for reading only
+	pickupsLock.RLock()
+	defer pickupsLock.RUnlock()
+
 	log.Println("getPickupList()")
 
 	//bypass same origin policy
@@ -339,6 +357,9 @@ func getPickupList(w http.ResponseWriter, r *http.Request) {
 }
 
 func confirmPickup(w http.ResponseWriter, r *http.Request) {
+	pickupsLock.Lock()
+	defer pickupsLock.Unlock()
+
 	log.Println("confirmPickup()")
 
 	//bypass same origin policy
@@ -372,6 +393,9 @@ func confirmPickup(w http.ResponseWriter, r *http.Request) {
 }
 
 func completePickup(w http.ResponseWriter, r *http.Request) {
+	pickupsLock.Lock()
+	defer pickupsLock.Unlock()
+
 	log.Println("completePickup()")
 
 	//bypass same origin policy
@@ -404,7 +428,12 @@ func completePickup(w http.ResponseWriter, r *http.Request) {
 	//perform UPDATE, INSERT, DELETE in order
 	serialChannel <- func() { databaseUpdatePickupStatusInCurrentTable(tmp, completed) }
 	serialChannel <- func() { databaseInsertPickupInPastTable(tmp) }
-	serialChannel <- func() { databaseDeletePickupInCurrentTable(tmp) }
+	go func() {
+		time.Sleep(1 * time.Minute) //DELETE from table after 1 minute to allow device to get completed status
+		//we will not accidently delete the phone number if it makes a new action because the saved counter in tmp will be stale
+		serialChannel <- func() { databaseDeletePickupInCurrentTable(tmp) }
+	}()
+	
 }
 
 //Check *(sql.DB) handle initialized and connected
@@ -432,6 +461,9 @@ func updateIfStale(targetResult sql.Result, targetTable string, targetPhoneNumbe
 				log.Println("selectRowsFromTable returned nil object")
 			}
 	} else {
+		pickupsLock.Lock()
+		defer pickupsLock.Unlock()
+
 		var tmp = pickups[targetPhoneNumber]
 		tmp.version = tmp.version+1
 		pickups[targetPhoneNumber] = tmp
@@ -513,6 +545,27 @@ func databaseDeletePickupInCurrentTable(targetPickup Pickup) {
 	}
 }
 
+//UPDATE new van location in vanlocations table
+func databaseUpdateVanLocations(vanId int, targetLocation Location) {
+	if checkDatabaseHandleValid(db) {
+		var result sql.Result
+		var err error
+		if result, err = db.Exec("UPDATE vanlocations SET LatestLatitude = $1, LatestLongitude = $2, LatestTime = $3 WHERE VanId = $4;", targetLocation.Latitude, targetLocation.Longitude, targetLocation.latestTime, vanId); err != nil {
+			log.Println(err)
+		} else {
+			if rowsAffected, _ := result.RowsAffected(); rowsAffected == 0 {
+				if result, err = db.Exec("INSERT INTO vanlocations (VanId, LatestLatitude, LatestLongitude, LatestTime) VALUES ($1, $2, $3, $4);", vanId, targetLocation.Latitude, targetLocation.Longitude, targetLocation.latestTime); err != nil {
+					log.Println(err)
+				} else {
+					log.Println("Created new van row on DB.")
+				}
+			} else {
+				log.Println("Updated van row on DB.")
+			}	
+		}
+	}		
+}
+
 func updateVanLocation(w http.ResponseWriter, r *http.Request) {
 	log.Println("updateVanLocation()")
 
@@ -583,6 +636,8 @@ func updateVanLocation(w http.ResponseWriter, r *http.Request) {
 	} else {
 		log.Println(err)
 	}
+
+	databaseUpdateVanLocations(vanNumber, vanLocations[vanNumber-1])
 }
 
 func server(wg *sync.WaitGroup) {
@@ -616,6 +671,9 @@ func server(wg *sync.WaitGroup) {
 
 //anything that is not inactive is set to inactive
 func removeInactivePickups(targetMap *map[string]Pickup, timeDifference time.Duration) {
+	pickupsLock.Lock()
+	defer pickupsLock.Unlock()
+
 	for k, v := range *targetMap {
 		if v.Status != inactive && time.Since(v.LatestTime) > timeDifference { //only check active pickups
 			//delete(*targetMap, k) do not delete, because we want to preserve the pickup records
@@ -671,8 +729,19 @@ func selectRowsFromTable(targetTable string) *(sql.Rows) {
 	//we construct the SELECT query in Go because SQL does not support ordinal marker for table names
 	query := fmt.Sprintf("SELECT * from %v;", targetTable)
 	rows, err := db.Query(query)
-	log.Println(targetTable)
-	log.Println("point3")
+	if err != nil {
+		log.Println(err)
+	} else {
+		return rows
+	}
+	return nil
+}
+
+//Get specific updated row from table from database and return *(sql.Rows)
+func selectRowsFromTableByPhoneNumber(targetTable string, targetPhoneNumber string) *(sql.Rows) {
+	//we construct the SELECT query in Go because SQL does not support ordinal marker for table names
+	query := fmt.Sprintf("SELECT * from %v WHERE PhoneNumber = $1;", targetTable)
+	rows, err := db.Query(query, targetPhoneNumber)
 	if err != nil {
 		log.Println(err)
 	} else {
@@ -683,12 +752,14 @@ func selectRowsFromTable(targetTable string) *(sql.Rows) {
 
 //Scan a passed in *(sql.Rows) and load into memory
 func loadPickupRowsIntoMemory(targetRows *(sql.Rows)) {
+	pickupsLock.Lock()
+	defer pickupsLock.Unlock()
+
 	var countOfRows = 0
 	for targetRows.Next() {
-		var pickupId int
 		var tmpPickup Pickup
 
-		if err := targetRows.Scan(&pickupId, &tmpPickup.PhoneNumber, &tmpPickup.devicePhrase, &tmpPickup.InitialLocation.Latitude, &tmpPickup.InitialLocation.Longitude, &tmpPickup.InitialTime, &tmpPickup.LatestLocation.Latitude, &tmpPickup.LatestLocation.Longitude, &tmpPickup.LatestTime, &tmpPickup.ConfirmTime, &tmpPickup.CompleteTime, &tmpPickup.Status, &tmpPickup.version); err != nil {
+		if err := targetRows.Scan(&tmpPickup.PhoneNumber, &tmpPickup.devicePhrase, &tmpPickup.InitialLocation.Latitude, &tmpPickup.InitialLocation.Longitude, &tmpPickup.InitialTime, &tmpPickup.LatestLocation.Latitude, &tmpPickup.LatestLocation.Longitude, &tmpPickup.LatestTime, &tmpPickup.ConfirmTime, &tmpPickup.CompleteTime, &tmpPickup.Status, &tmpPickup.version); err != nil {
 			log.Println(err)
 		}
 
@@ -729,53 +800,79 @@ func loadPickupRowsIntoMemory(targetRows *(sql.Rows)) {
 	log.Printf("Finished loading %v pickups.\n", countOfRows)
 }
 
-func setupCurrentDatabase() {
-	var err error //define err because mixing it with the global db var and := operator creates local scoped db
-	db, err = sql.Open("postgres", os.Getenv("DATABASE_URL"))
-	if err != nil {
-		log.Println(err)
-	}
+//Scan a passed in *(sql.Rows) and load into memory
+func loadVanLocationRowsIntoMemory(targetRows *(sql.Rows)) {
+	var countOfRows = 0
+	for targetRows.Next() {
+		var vanId int
+		var tmpLocation Location
+		var version int
 
-	var tableExist bool
-	err = db.QueryRow("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND    table_name = 'inprogress');").Scan(&tableExist)
-	if err != nil {
-		log.Println(err)
-	}
-	if tableExist { //load in inprogress pickups from database
-		go func() {
-			log.Println("point1")
-			if rows := selectRowsFromTable("inprogress"); rows != nil {
-				loadPickupRowsIntoMemory(rows)
-			} else {
-				log.Println("selectRowsFromTable returned nil object")
-			}
-		}()
-	} else { //create new inprogress database
-		if _, err = db.Exec("CREATE TABLE inprogress (PickupId SERIAL,PhoneNumber CHAR(10) NOT NULL,DeviceId VARCHAR(36) NOT NULL,InitialLatitude REAL NOT NULL,InitialLongitude REAL NOT NULL,InitialTime TIMESTAMP NOT NULL,LatestLatitude REAL NOT NULL,LatestLongitude REAL NOT NULL,LatestTime TIMESTAMP NOT NULL,ConfirmTime TIMESTAMP NOT NULL,CompleteTime TIMESTAMP NOT NULL,Status INT NOT NULL,Version INT NOT NULL DEFAULT 0,CONSTRAINT PK_PickupIdInProgress PRIMARY KEY (PickupId),CONSTRAINT Check_PhoneNumber CHECK (CHAR_LENGTH(PhoneNumber) = 10));"); err != nil {
+		if err := targetRows.Scan(&vanId, &tmpLocation.Latitude, &tmpLocation.Longitude, &tmpLocation.latestTime, &version); err != nil {
 			log.Println(err)
-		} else {
-			log.Println("CREATE TABLE inprogress executed\n")
 		}
+
+		fmt.Printf("Loaded existing van location for van ID %v\n", vanId)
+
+		for len(vanLocations) < vanId {
+			vanLocations = append(vanLocations, Location{})
+		}
+
+		vanLocations[vanId-1] = tmpLocation
+		countOfRows++
 	}
+	targetRows.Close()
+	log.Printf("Finished loading %v van locations.\n", countOfRows)
 }
 
-func setupPastDatabase() {
-	var err error //define err because mixing it with the global db var and := operator creates local scoped db
-	db, err = sql.Open("postgres", os.Getenv("DATABASE_URL"))
-	if err != nil {
-		log.Println(err)
+func setupTable(tableName string, query string) bool{
+	if !checkDatabaseHandleValid(db) {
+		return false
 	}
 
 	var tableExist bool
-	err = db.QueryRow("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'pastpickups');").Scan(&tableExist)
-	if err != nil {
+	if err := db.QueryRow("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1);", tableName).Scan(&tableExist); err != nil {
 		log.Println(err)
 	}
 	if !tableExist {
-		if _, err = db.Exec("CREATE TABLE pastpickups (PickupId SERIAL,PhoneNumber CHAR(10) NOT NULL,DeviceId VARCHAR(36) NOT NULL,InitialLatitude REAL NOT NULL,InitialLongitude REAL NOT NULL,InitialTime TIMESTAMP NOT NULL,LatestLatitude REAL NOT NULL,LatestLongitude REAL NOT NULL,LatestTime TIMESTAMP NOT NULL,ConfirmTime TIMESTAMP NOT NULL,CompleteTime TIMESTAMP NOT NULL,Status INT NOT NULL,Version INT NOT NULL DEFAULT 0,CONSTRAINT Check_PhoneNumber CHECK (CHAR_LENGTH(PhoneNumber) = 10));"); err != nil {
+		if _, err := db.Exec(query); err != nil {
 			log.Println(err)
 		} else {
-			log.Println("CREATE TABLE pastpickups executed\n")
+			return true
+		}
+	} else {
+		return true
+	}
+	return false
+}
+
+func setupRequiredTables() {
+	//setup Pickups in progress table
+	if setupTable("inprogress", "CREATE TABLE inprogress (PhoneNumber CHAR(10) NOT NULL,DeviceId VARCHAR(36) NOT NULL PRIMARY KEY,InitialLatitude REAL NOT NULL,InitialLongitude REAL NOT NULL,InitialTime TIMESTAMP NOT NULL,LatestLatitude REAL NOT NULL,LatestLongitude REAL NOT NULL,LatestTime TIMESTAMP NOT NULL,ConfirmTime TIMESTAMP NOT NULL,CompleteTime TIMESTAMP NOT NULL,Status INT NOT NULL,Version INT NOT NULL DEFAULT 0,CONSTRAINT Check_PhoneNumber CHECK (CHAR_LENGTH(PhoneNumber) = 10));") {
+		log.Println("Pickups in progress table already exists/created. ")
+
+		//load in inprogress pickups from database
+		if rows := selectRowsFromTable("inprogress"); rows != nil {
+			loadPickupRowsIntoMemory(rows)
+		} else {
+			log.Println("Loading inprogress table returned nil object")
+		}
+	}
+
+	//setup Pickups past table
+	if setupTable("pastpickups", "CREATE TABLE pastpickups (PhoneNumber CHAR(10) NOT NULL,DeviceId VARCHAR(36) NOT NULL,InitialLatitude REAL NOT NULL,InitialLongitude REAL NOT NULL,InitialTime TIMESTAMP NOT NULL,LatestLatitude REAL NOT NULL,LatestLongitude REAL NOT NULL,LatestTime TIMESTAMP NOT NULL,ConfirmTime TIMESTAMP NOT NULL,CompleteTime TIMESTAMP NOT NULL,Status INT NOT NULL,Version INT NOT NULL DEFAULT 0,CONSTRAINT Check_PhoneNumber CHECK (CHAR_LENGTH(PhoneNumber) = 10));") {
+		log.Println("Pickups past table already exists/created. ")
+	}
+
+	//setup Van locations table
+	if setupTable("vanlocations", "CREATE TABLE vanlocations (VanId INT NOT NULL PRIMARY KEY,LatestLatitude REAL NOT NULL,LatestLongitude REAL NOT NULL,LatestTime TIMESTAMP NOT NULL,Version INT NOT NULL DEFAULT 0);") {
+		log.Println("Van locations table already exists/created.")
+
+		//load in van locations from database
+		if rows := selectRowsFromTable("vanlocations"); rows != nil {
+			loadVanLocationRowsIntoMemory(rows)
+		} else {
+			log.Println("Loading vanlocations table returned nil object")
 		}
 	}
 }
@@ -783,10 +880,21 @@ func setupPastDatabase() {
 func main() {
 
 	pickups = make(map[string]Pickup)
+	pickupsLock = new(sync.RWMutex)
+
 	vanLocations = make([]Location, 0)
 	generateSuccessResponse(&successResponse)
 	generateFailResponse(&failResponse)
 	generateWrongPasswordResponse(&wrongPasswordResponse)
+
+	//Create global db handle
+	var err error //define err because mixing it with the global db var and := operator creates local scoped db
+	db, err = sql.Open("postgres", os.Getenv("DATABASE_URL"))
+	if err != nil {
+		log.Println(err)
+	}
+
+	setupRequiredTables()
 
 	//create channel of function type
 	serialChannel = make(chan func())
@@ -816,14 +924,13 @@ func main() {
 		fmt.Println(result)
 	*/
 
-	setupCurrentDatabase()
-	setupPastDatabase()
+	
 
-	fmt.Println("Finished setting up and ready. Loading existing pickups stored on database into memory may be happening in background.")
+	fmt.Println("Finished setting up.")
 
 	wg.Wait()
 
-	err := db.Close()
+	err = db.Close()
 	if err != nil {
 		log.Println(err)
 	}
