@@ -163,8 +163,6 @@ func asyncTest(w http.ResponseWriter, r *http.Request) {
 }
 
 func newPickup(w http.ResponseWriter, r *http.Request) {
-	pickupsLock.Lock()
-	defer pickupsLock.Unlock()
 
 	log.Println("newPickup()")
 	//bypass same origin policy
@@ -234,9 +232,6 @@ func getPickupInfo(w http.ResponseWriter, r *http.Request) {
 		log.Println("getPickupInfo()")
 	*/
 
-	pickupsLock.Lock()
-	defer pickupsLock.Unlock()
-
 	//bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
@@ -299,9 +294,6 @@ func getVanLocations(w http.ResponseWriter, r *http.Request) {
 		log.Println("getVanLocations()")
 	*/
 
-	pickupsLock.Lock()
-	defer pickupsLock.Unlock()
-
 	//bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
@@ -314,15 +306,12 @@ func getVanLocations(w http.ResponseWriter, r *http.Request) {
 }
 
 func cancelPickup(w http.ResponseWriter, r *http.Request) {
-	pickupsLock.Lock()
-	defer pickupsLock.Unlock()
 
 	log.Println("cancelPickup()")
 
 	//bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-pickupsLock.Lock()
-	defer pickupsLock.Unlock()
+
 	//parse http parameters
 	r.ParseForm()
 
@@ -396,8 +385,6 @@ func getPickupList(w http.ResponseWriter, r *http.Request) {
 }
 
 func confirmPickup(w http.ResponseWriter, r *http.Request) {
-	pickupsLock.Lock()
-	defer pickupsLock.Unlock()
 
 	log.Println("confirmPickup()")
 
@@ -439,8 +426,6 @@ func confirmPickup(w http.ResponseWriter, r *http.Request) {
 }
 
 func completePickup(w http.ResponseWriter, r *http.Request) {
-	pickupsLock.Lock()
-	defer pickupsLock.Unlock()
 
 	log.Println("completePickup()")
 
@@ -756,8 +741,10 @@ func server(wg *sync.WaitGroup) {
 
 //anything that is not inactive is set to inactive
 func removeInactivePickups(targetMap *map[string]Pickup, timeDifference time.Duration) {
+	/*
 	pickupsLock.Lock()
 	defer pickupsLock.Unlock()
+	*/
 
 	for k, v := range *targetMap {
 		if v.Status != inactive && time.Since(v.LatestTime) > timeDifference { //only check active pickups
