@@ -163,6 +163,8 @@ func asyncTest(w http.ResponseWriter, r *http.Request) {
 }
 
 func newPickup(w http.ResponseWriter, r *http.Request) {
+	pickupsLock.Lock()
+	defer pickupsLock.Unlock()
 
 	log.Println("newPickup()")
 	//bypass same origin policy
@@ -227,6 +229,8 @@ func newPickup(w http.ResponseWriter, r *http.Request) {
 }
 
 func getPickupInfo(w http.ResponseWriter, r *http.Request) {
+	pickupsLock.Lock()
+	defer pickupsLock.Unlock()
 	/*
 		//Disable logging for getPickupInfo for brevity
 		log.Println("getPickupInfo()")
@@ -306,6 +310,8 @@ func getVanLocations(w http.ResponseWriter, r *http.Request) {
 }
 
 func cancelPickup(w http.ResponseWriter, r *http.Request) {
+	pickupsLock.Lock()
+	defer pickupsLock.Unlock()
 
 	log.Println("cancelPickup()")
 
@@ -360,10 +366,10 @@ func cancelPickup(w http.ResponseWriter, r *http.Request) {
 
 func getPickupList(w http.ResponseWriter, r *http.Request) {
 	//Use RLock which locks for reading only
-	pickupsLock.RLock()
+	pickupsLock.RLock()	
 	defer pickupsLock.RUnlock()
 
-	log.Println("getPickupList()")
+	//log.Println("getPickupList()")
 
 	//bypass same origin policy
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -426,7 +432,9 @@ func confirmPickup(w http.ResponseWriter, r *http.Request) {
 }
 
 func completePickup(w http.ResponseWriter, r *http.Request) {
-
+	pickupsLock.Lock()
+	defer pickupsLock.Unlock()
+	
 	log.Println("completePickup()")
 
 	//bypass same origin policy
@@ -548,7 +556,6 @@ func databaseUpdatePickupStatusInCurrentTable(targetPickup Pickup, newStatus int
 	if checkDatabaseHandleValid(db) {
 		var result sql.Result
 		var err error
-		log.Println("to status ", newStatus,  targetPickup.PhoneNumber, targetPickup.version)
 		if result, err = db.Exec("UPDATE inprogress SET Status = $1, Version = $4 WHERE PhoneNumber = $2 AND Version = $3;", newStatus, targetPickup.PhoneNumber, targetPickup.version, targetPickup.version+1); err != nil {
 			log.Println(err)
 			return !updateIfStale(nil, "inprogress", targetPickup.PhoneNumber, false)
@@ -601,6 +608,7 @@ func databaseDeletePickupInCurrentTable(targetPickup Pickup) bool {
 	if checkDatabaseHandleValid(db) {
 		var result sql.Result
 		var err error
+		//Identify pickups by phoneNumber and initialTime instead of version since the phoneNumber might have another entry with new pickup
 		if result, err = db.Exec("DELETE FROM inprogress WHERE PhoneNumber = $1 AND InitialTime = $2;", targetPickup.PhoneNumber, targetPickup.InitialTime); err != nil {
 			log.Println(err)
 			return !updateIfStale(result, "inprogress", targetPickup.PhoneNumber, true)
@@ -628,7 +636,7 @@ func databaseUpdateVanLocations(vanId int, targetLocation Location) bool {
 					log.Println("Created new van row on DB.")
 				}
 			} else {
-				log.Println("Updated van row on DB. %v", targetLocation)
+				//log.Println("Updated van row on DB. %v", targetLocation)
 			}	
 		}
 		return true
@@ -744,10 +752,6 @@ func server(wg *sync.WaitGroup) {
 
 //anything that is not inactive is set to inactive
 func removeInactivePickups(targetMap *map[string]Pickup, timeDifference time.Duration) {
-	/*
-	pickupsLock.Lock()
-	defer pickupsLock.Unlock()
-	*/
 
 	for k, v := range *targetMap {
 		if v.Status != inactive && time.Since(v.LatestTime) > timeDifference { //only check active pickups
