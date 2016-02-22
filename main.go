@@ -548,7 +548,7 @@ func databaseUpdatePickupStatusInCurrentTable(targetPickup Pickup, newStatus int
 	if checkDatabaseHandleValid(db) {
 		var result sql.Result
 		var err error
-		
+		log.Println("to status ", newStatus,  targetPickup.PhoneNumber, targetPickup.version)
 		if result, err = db.Exec("UPDATE inprogress SET Status = $1, Version = $4 WHERE PhoneNumber = $2 AND Version = $3;", newStatus, targetPickup.PhoneNumber, targetPickup.version, targetPickup.version+1); err != nil {
 			log.Println(err)
 			return !updateIfStale(nil, "inprogress", targetPickup.PhoneNumber, true)
@@ -566,7 +566,7 @@ func databaseUpdatePickupLatestLocationInCurrentTable(targetPickup Pickup) bool 
 	if checkDatabaseHandleValid(db) {
 		var result sql.Result
 		var err error
-		log.Println(targetPickup.PhoneNumber, targetPickup.version)
+
 		if result, err = db.Exec("UPDATE inprogress SET LatestLatitude = $1, LatestLongitude = $2, LatestTime = $3, Version = $6 WHERE PhoneNumber = $4 AND Version = $5;", targetPickup.LatestLocation.Latitude, targetPickup.LatestLocation.Longitude, targetPickup.LatestTime, targetPickup.PhoneNumber, targetPickup.version, targetPickup.version+1); err != nil {
 			log.Println(err)
 			return !updateIfStale(result, "inprogress", targetPickup.PhoneNumber, true)
