@@ -515,7 +515,7 @@ func updateIfStale(targetResult sql.Result, targetTable string, targetPhoneNumbe
 			return true
 		}
 	} else {
-		//set noIncrementVersion to true for thing like DELETE so that the phone number in memory's version is not incremented because we may have a newer pickup in the map already
+		//set noIncrementVersion to true for thing like DELETE/INSERT so that the phone number in memory's version is not incremented because we may have a newer pickup in the map already
 		if !noIncrementVersion { 
 			var tmp = pickups[targetPhoneNumber]
 			tmp.version = tmp.version+1
@@ -533,11 +533,11 @@ func databaseInsertPickupInCurrentTable(targetPickup Pickup) bool {
 		var err error
 		if result, err = db.Exec("INSERT INTO inprogress (PhoneNumber, DeviceId, InitialLatitude, InitialLongitude, InitialTime, LatestLatitude, LatestLongitude, LatestTime, ConfirmTime, CompleteTime, Status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);", targetPickup.PhoneNumber, targetPickup.devicePhrase, targetPickup.InitialLocation.Latitude, targetPickup.InitialLocation.Longitude, targetPickup.InitialTime, targetPickup.LatestLocation.Latitude, targetPickup.LatestLocation.Longitude, targetPickup.LatestTime, targetPickup.ConfirmTime, targetPickup.CompleteTime, targetPickup.Status); err != nil {
 			log.Println(err)
-			return !updateIfStale(nil, "inprogress", targetPickup.PhoneNumber, false)
+			return !updateIfStale(nil, "inprogress", targetPickup.PhoneNumber, true)
 		} else {
 			rowsAffected, _ := result.RowsAffected()
 			fmt.Printf("INSERT %v rows affected for databaseInsertPickupInCurrentTable()\n", rowsAffected)
-			return !updateIfStale(result, "inprogress", targetPickup.PhoneNumber, false)
+			return !updateIfStale(result, "inprogress", targetPickup.PhoneNumber, true)
 		}
 	}
 	return false		
