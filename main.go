@@ -515,12 +515,13 @@ func updateIfStale(targetResult sql.Result, targetTable string, targetPhoneNumbe
 			return true
 		}
 	} else {
-		var tmp = pickups[targetPhoneNumber]
-		if !noIncrementVersion {
+		//set noIncrementVersion to true for thing like DELETE so that the phone number in memory's version is not incremented because we may have a newer pickup in the map already
+		if !noIncrementVersion { 
+			var tmp = pickups[targetPhoneNumber]
 			tmp.version = tmp.version+1
+			pickups[targetPhoneNumber] = tmp
+			log.Printf("OK - %v version incremented to %v", targetPhoneNumber, tmp.version)
 		}
-		pickups[targetPhoneNumber] = tmp
-		log.Printf("OK - %v version incremented to %v", targetPhoneNumber, tmp.version)
 	}
 	return false //no update needed, all good
 }
