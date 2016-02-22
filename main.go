@@ -493,7 +493,7 @@ func checkDatabaseHandleValid(targetHandle *(sql.DB)) bool {
 }
 
 //Determine if update has failed due to holding onto stale record and update memory. Return boolean on whether updated > 0 rows. True means the calling query failed and we resynced. 
-func updateIfStale(targetResult sql.Result, targetTable string, targetPhoneNumber string) bool{
+func updateIfStale(targetResult sql.Result, targetTable string, targetPhoneNumber string, noIncrementVersion bool) bool{
 	//if result is nil, reload data
 	if targetResult == nil {
 		log.Printf("Nil result passed to stale function (query error?). Load current pickups from database into memory.")
@@ -516,7 +516,9 @@ func updateIfStale(targetResult sql.Result, targetTable string, targetPhoneNumbe
 		}
 	} else {
 		var tmp = pickups[targetPhoneNumber]
-		tmp.version = tmp.version+1
+		if !noIncrementVersion {
+			tmp.version = tmp.version+1
+		}
 		pickups[targetPhoneNumber] = tmp
 		log.Printf("OK - %v version incremented to %v", targetPhoneNumber, tmp.version)
 	}
@@ -530,11 +532,11 @@ func databaseInsertPickupInCurrentTable(targetPickup Pickup) bool {
 		var err error
 		if result, err = db.Exec("INSERT INTO inprogress (PhoneNumber, DeviceId, InitialLatitude, InitialLongitude, InitialTime, LatestLatitude, LatestLongitude, LatestTime, ConfirmTime, CompleteTime, Status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);", targetPickup.PhoneNumber, targetPickup.devicePhrase, targetPickup.InitialLocation.Latitude, targetPickup.InitialLocation.Longitude, targetPickup.InitialTime, targetPickup.LatestLocation.Latitude, targetPickup.LatestLocation.Longitude, targetPickup.LatestTime, targetPickup.ConfirmTime, targetPickup.CompleteTime, targetPickup.Status); err != nil {
 			log.Println(err)
-			return !updateIfStale(nil, "inprogress", targetPickup.PhoneNumber)
+			return !updateIfStale(nil, "inprogress", targetPickup.PhoneNumber, true)
 		} else {
 			rowsAffected, _ := result.RowsAffected()
 			fmt.Printf("INSERT %v rows affected for databaseInsertPickupInCurrentTable()\n", rowsAffected)
-			return !updateIfStale(result, "inprogress", targetPickup.PhoneNumber)
+			return !updateIfStale(result, "inprogress", targetPickup.PhoneNumber, true)
 		}
 	}
 	return false		
@@ -548,11 +550,11 @@ func databaseUpdatePickupStatusInCurrentTable(targetPickup Pickup, newStatus int
 		log.Println(targetPickup.PhoneNumber, targetPickup.version)
 		if result, err = db.Exec("UPDATE inprogress SET Status = $1, Version = $4 WHERE PhoneNumber = $2 AND Version = $3;", newStatus, targetPickup.PhoneNumber, targetPickup.version, targetPickup.version+1); err != nil {
 			log.Println(err)
-			return !updateIfStale(nil, "inprogress", targetPickup.PhoneNumber)
+			return !updateIfStale(nil, "inprogress", targetPickup.PhoneNumber, true)
 		} else {
 			rowsAffected, _ := result.RowsAffected()
 			fmt.Printf("UPDATE %v rows affected for databaseUpdatePickupStatusInCurrentTable()\n", rowsAffected)
-			return !updateIfStale(result, "inprogress", targetPickup.PhoneNumber)
+			return !updateIfStale(result, "inprogress", targetPickup.PhoneNumber, true)
 		}
 	}
 	return false
@@ -565,11 +567,11 @@ func databaseUpdatePickupLatestLocationInCurrentTable(targetPickup Pickup) bool 
 		var err error
 		if result, err = db.Exec("UPDATE inprogress SET LatestLatitude = $1, LatestLongitude = $2, LatestTime = $3, Version = $6 WHERE PhoneNumber = $4 AND Version = $5;", targetPickup.LatestLocation.Latitude, targetPickup.LatestLocation.Longitude, targetPickup.LatestTime, targetPickup.PhoneNumber, targetPickup.version, targetPickup.version+1); err != nil {
 			log.Println(err)
-			return !updateIfStale(result, "inprogress", targetPickup.PhoneNumber)
+			return !updateIfStale(result, "inprogress", targetPickup.PhoneNumber, true)
 		} else {
 			rowsAffected, _ := result.RowsAffected()
 			fmt.Printf("UPDATE %v rows affected for databaseUpdatePickupLatestLocationInCurrentTable()\n", rowsAffected)
-			return !updateIfStale(result, "inprogress", targetPickup.PhoneNumber)
+			return !updateIfStale(result, "inprogress", targetPickup.PhoneNumber, true)
 		}
 	}
 	return false
@@ -582,12 +584,11 @@ func databaseInsertPickupInPastTable(targetPickup Pickup) bool {
 		var err error
 		if result, err = db.Exec("INSERT INTO pastpickups (PhoneNumber, DeviceId, InitialLatitude, InitialLongitude, InitialTime, LatestLatitude, LatestLongitude, LatestTime, ConfirmTime, CompleteTime, Status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);", targetPickup.PhoneNumber, targetPickup.devicePhrase, targetPickup.InitialLocation.Latitude, targetPickup.InitialLocation.Longitude, targetPickup.InitialTime, targetPickup.LatestLocation.Latitude, targetPickup.LatestLocation.Longitude, targetPickup.LatestTime, targetPickup.ConfirmTime, targetPickup.CompleteTime, targetPickup.Status); err != nil {
 			log.Println(err)
-			return !updateIfStale(result, "inprogress", targetPickup.PhoneNumber)
+			return !updateIfStale(result, "inprogress", targetPickup.PhoneNumber, true)
 		} else {
 			rowsAffected, _ := result.RowsAffected()
 			fmt.Printf("INSERT %v rows affected for databaseInsertPickupInPastTable()\n", rowsAffected)
-			updateIfStale(result, "inprogress", targetPickup.PhoneNumber)
-			return !updateIfStale(result, "inprogress", targetPickup.PhoneNumber)
+			return !updateIfStale(result, "inprogress", targetPickup.PhoneNumber, true)
 		}
 	}
 	return false
@@ -600,12 +601,11 @@ func databaseDeletePickupInCurrentTable(targetPickup Pickup) bool {
 		var err error
 		if result, err = db.Exec("DELETE FROM inprogress WHERE PhoneNumber = $1 AND InitialTime = $2;", targetPickup.PhoneNumber, targetPickup.InitialTime); err != nil {
 			log.Println(err)
-			return !updateIfStale(result, "inprogress", targetPickup.PhoneNumber)
+			return !updateIfStale(result, "inprogress", targetPickup.PhoneNumber, false)
 		} else {
 			rowsAffected, _ := result.RowsAffected()
 			fmt.Printf("DELETE %v rows affected for databaseDeletePickupInCurrentTable()\n", rowsAffected)
-			updateIfStale(result, "inprogress", targetPickup.PhoneNumber)
-			return !updateIfStale(result, "inprogress", targetPickup.PhoneNumber)
+			return !updateIfStale(result, "inprogress", targetPickup.PhoneNumber, false)
 		}
 	}
 	return false
