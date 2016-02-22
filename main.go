@@ -344,7 +344,7 @@ func cancelPickup(w http.ResponseWriter, r *http.Request) {
 	if isAsyncRequest(r.Form) {
 		fmt.Println("async requested") //TO DO
 	} else {
-		if databaseInsertPickupInPastTable(tmp) && databaseDReletePickupInCurrentTable(tmp) {
+		if databaseInsertPickupInPastTable(tmp) && databaseDeletePickupInCurrentTable(tmp) {
 			fmt.Fprintf(w,successResponse)
 		} else {
 			fmt.Fprintf(w, failResponse)
