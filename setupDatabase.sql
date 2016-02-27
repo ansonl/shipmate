@@ -96,3 +96,22 @@ DELETE FROM inprogress
 
 
 SELECT * from inprogress;
+
+
+#trigger for telling when a phone number row has been changed
+DROP TRIGGER inprogresschange ON inprogress;
+
+CREATE or REPLACE FUNCTION notifyPhoneNumber() RETURNS trigger AS $$
+ BEGIN  
+  EXECUTE FORMAT('NOTIFY notifyphonenumber, ''%s''', NEW.PhoneNumber); 
+  RETURN NULL;
+ END;  
+$$ LANGUAGE plpgsql; 
+
+CREATE TRIGGER inprogresschange AFTER INSERT OR UPDATE OR DELETE
+ ON inprogress
+ FOR EACH ROW 
+ EXECUTE PROCEDURE notifyPhoneNumber();
+
+#find own pid
+SELECT * FROM pg_stat_activity WHERE pid = pg_backend_pid();
