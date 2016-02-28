@@ -103,15 +103,29 @@ DROP TRIGGER inprogresschange ON inprogress;
 
 CREATE or REPLACE FUNCTION notifyPhoneNumber() RETURNS trigger AS $$
  BEGIN  
-  EXECUTE FORMAT('NOTIFY notifyphonenumber, ''%s''', NEW.PhoneNumber); 
+  IF TG_OP='DELETE' THEN
+    EXECUTE FORMAT('NOTIFY notifyphonenumber, ''%s''', OLD.PhoneNumber); 
+  ELSE
+    EXECUTE FORMAT('NOTIFY notifyphonenumber, ''%s''', NEW.PhoneNumber); 
+  END IF;
   RETURN NULL;
  END;  
-$$ LANGUAGE plpgsql; 
+$$ LANGUAGE plpgsql;  
 
 CREATE TRIGGER inprogresschange AFTER INSERT OR UPDATE OR DELETE
  ON inprogress
  FOR EACH ROW 
  EXECUTE PROCEDURE notifyPhoneNumber();
 
+CREATE TRIGGER inprogressdelete AFTER DELETE
+ ON inprogress
+ FOR EACH ROW 
+ EXECUTE PROCEDURE notifyPhoneNumber();
+
 #find own pid
 SELECT * FROM pg_stat_activity WHERE pid = pg_backend_pid();
+
+SELECT EXISTS(
+    SELECT 1
+    FROM pg_trigger
+    WHERE tgname='inprogresschange')

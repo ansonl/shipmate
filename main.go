@@ -256,6 +256,7 @@ func databaseDeletePickupInCurrentTable(targetPickup Pickup) *(sql.Rows) {
 		//Identify pickups by phoneNumber and initialTime instead of version since the phoneNumber might have another entry with new pickup
 		if result, err = db.Exec(`DELETE FROM inprogress 
 			WHERE PhoneNumber = $1 AND InitialTime = $2;`, targetPickup.PhoneNumber, targetPickup.InitialTime); err != nil {
+			log.Println("delete error")
 			log.Println(err)
 		} else {
 			rowsAffected, _ := result.RowsAffected()
@@ -446,7 +447,7 @@ func newPickup(w http.ResponseWriter, r *http.Request) {
 	} else { //Syncronous request
 		//INSERT pickup as new row into inprogress table
 		if newRows := databaseInsertPickupInCurrentTable(tmp); newRows != nil {
-			loadPickupRowsIntoMemory(&pickups, newRows);
+			loadPickupRowsIntoMemory(&pickups, newRows, nil);
 			fmt.Fprintf(w, failResponse)
 		} else {
 			//commit changes to instance memory
@@ -518,7 +519,7 @@ func getPickupInfo(w http.ResponseWriter, r *http.Request) {
 	} else { //Syncronous request
 		//INSERT pickup as new row into inprogress table
 		if newRows := databaseUpdatePickupLatestLocationInCurrentTable(tmp); newRows != nil {
-			loadPickupRowsIntoMemory(&pickups, newRows);
+			loadPickupRowsIntoMemory(&pickups, newRows, nil);
 			fmt.Fprintf(w, failResponse)
 		} else {
 			//increment pickup counter in tmp struct
@@ -599,7 +600,7 @@ func cancelPickup(w http.ResponseWriter, r *http.Request) {
 		//INSERT pickup as new row into inprogress table
 		if databaseInsertPickupInPastTable(tmp) {
 			if newRows := databaseDeletePickupInCurrentTable(tmp); newRows != nil {
-				loadPickupRowsIntoMemory(&pickups, newRows);
+				loadPickupRowsIntoMemory(&pickups, newRows, nil);
 				fmt.Fprintf(w, failResponse)
 			} else {
 				//commit changes to instance memory
@@ -672,7 +673,7 @@ func confirmPickup(w http.ResponseWriter, r *http.Request) {
 	} else { //Syncronous request
 		//INSERT pickup as new row into inprogress table
 		if newRows :=  databaseUpdatePickupStatusInCurrentTable(tmp, confirmed); newRows != nil {
-			loadPickupRowsIntoMemory(&pickups, newRows);
+			loadPickupRowsIntoMemory(&pickups, newRows, nil);
 			fmt.Fprintf(w, failResponse)
 		} else {
 			//increment pickup counter in tmp struct
@@ -721,7 +722,7 @@ func completePickup(w http.ResponseWriter, r *http.Request) {
 	} else { //Syncronous request
 		//INSERT pickup as new row into inprogress table
 		if newRows :=  databaseUpdatePickupStatusInCurrentTable(tmp, completed); newRows != nil {
-			loadPickupRowsIntoMemory(&pickups, newRows);
+			loadPickupRowsIntoMemory(&pickups, newRows, nil);
 			fmt.Fprintf(w, failResponse)
 		} else {
 			databaseInsertPickupInPastTable(tmp)
@@ -883,7 +884,7 @@ func selectRowsFromTableByPhoneNumber(targetTable string, targetPhoneNumber stri
 }
 
 //Scan a passed in *(sql.Rows) and load into passed map. Don't lock, this should be called from some syncronous methods
-func loadPickupRowsIntoMemory(targetMap *map[string]Pickup, targetRows *(sql.Rows)) int {
+func loadPickupRowsIntoMemory(targetMap *map[string]Pickup, targetRows *(sql.Rows), notificationObj *pq.Notification) int {
 	var countOfRows = 0
 	for targetRows.Next() {
 		var tmpPickup Pickup
@@ -898,6 +899,12 @@ func loadPickupRowsIntoMemory(targetMap *map[string]Pickup, targetRows *(sql.Row
 	}
 	targetRows.Close()
 	log.Printf("Finished loading %v pickups.\n", countOfRows)
+
+	//Handle DELETE of a row. If no rows are returned, that means the row was deleted
+	if countOfRows == 0 && notificationObj != nil{
+		log.Println("Row", notificationObj.Extra, "deleted from database. Set to inactive in memory.")
+		setPickupToInactiveInMemory(&pickups, notificationObj.Extra);
+	}
 	return countOfRows
 
 	/*
@@ -997,7 +1004,7 @@ func setupRequiredTables() {
 
 		//load in inprogress pickups from database
 		if rows := selectRowsFromTable("inprogress"); rows != nil {
-			loadPickupRowsIntoMemory(&pickups, rows)
+			loadPickupRowsIntoMemory(&pickups, rows, nil)
 		} else {
 			log.Println("Loading inprogress table returned nil object")
 		}
@@ -1038,6 +1045,48 @@ func setupRequiredTables() {
 }
 
 func setupDatabaseListener() {
+	if !checkDatabaseHandleValid(db) {
+		return
+	}
+
+	//create/replace function for notifyPhoneNumber()
+	if _, err := db.Exec(`CREATE or REPLACE FUNCTION notifyPhoneNumber() RETURNS trigger AS $$
+ 			BEGIN  
+  			  IF TG_OP='DELETE' THEN
+    				EXECUTE FORMAT('NOTIFY notifyphonenumber, ''%s''', OLD.PhoneNumber); 
+  				ELSE
+    				EXECUTE FORMAT('NOTIFY notifyphonenumber, ''%s''', NEW.PhoneNumber); 
+  				END IF;
+  			RETURN NULL;
+ 			END;  
+		$$ LANGUAGE plpgsql;`); err != nil {
+		log.Println(err)
+	} else {
+		log.Println("Successfully create/replace function notifyPhoneNumber()")
+	}
+
+	//check for trigger existence
+	var triggerExist bool
+	if err := db.QueryRow(`SELECT EXISTS(
+		SELECT 1
+			FROM pg_trigger
+			WHERE tgname='inprogresschange')`).Scan(&triggerExist); err != nil {
+		log.Println(err)
+	}
+	if !triggerExist {
+		if _, err := db.Exec(`CREATE TRIGGER inprogresschange AFTER INSERT OR UPDATE OR DELETE
+ 			ON inprogress
+ 			FOR EACH ROW 
+ 			EXECUTE PROCEDURE notifyPhoneNumber();`); err != nil {
+			log.Println(err)
+		} else {
+			log.Println("Successfully create trigger inprogresschange")
+		}
+	} else {
+		log.Println("Trigger inprogresschange exists.")
+	}
+
+	//Create handler for logging listener errors
 	reportProblem := func(ev pq.ListenerEventType, err error) {
 		if err != nil {
 			fmt.Println(err.Error())
@@ -1071,8 +1120,6 @@ func setupDatabaseListener() {
 		}
 	}
 
-	
-
 	//Monitor for noitification in background
 	go func() {
 		for {
@@ -1084,7 +1131,8 @@ func setupDatabaseListener() {
 				if updatedRows := selectRowsFromTableByPhoneNumber("inprogress", notificationObj.Extra); updatedRows == nil {
 					log.Println(err)
 				} else {
-					loadPickupRowsIntoMemory(&pickups, updatedRows);
+					//We handle the possibility of deleted rows in laod pickups rows into memory since we can only enumerate over rows object once
+					loadPickupRowsIntoMemory(&pickups, updatedRows, notificationObj);
 				}
 			}
 		}
