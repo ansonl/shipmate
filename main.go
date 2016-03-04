@@ -489,6 +489,7 @@ func getPickupInfo(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, successResponse)
 		return
 	}
+	fmt.Println("pickupexists in memory")
 
 	//check passphrase in "phrase" parameter
 	if !isDriverPhraseCorrect(r.Form) {
