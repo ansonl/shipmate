@@ -484,6 +484,7 @@ func getPickupInfo(w http.ResponseWriter, r *http.Request) {
 
 	number = r.Form["phoneNumber"][0]
 
+	fmt.Println("check existenace")
 	//if the pickup does not exist, return status 0, so that monitorStatus on iOS will show pickupInactive
 	if _, exist := pickups[number]; !exist {
 		fmt.Fprintf(w, successResponse)
