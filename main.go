@@ -605,6 +605,7 @@ func cancelPickup(w http.ResponseWriter, r *http.Request) {
 			} else {
 				//commit changes to instance memory
 				pickups[number] = tmp
+				delete(*targetMap, number)
 				fmt.Fprintf(w, successResponse)
 			}
 		} else {
