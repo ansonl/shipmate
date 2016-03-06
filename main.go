@@ -826,6 +826,8 @@ func removeInactiveVanLocations(targetArray []Location, timeDifference time.Dura
 
 	for i := 0; i < len(targetArray); i++ {
 
+		fmt.Println(time.Since((targetArray)[i].latestTime))
+
 		if (targetArray[i].latestTime != time.Time{} && time.Since((targetArray)[i].latestTime) > timeDifference) {
 			/*
 			fmt.Println(time.Since((targetArray)[i].latestTime))
@@ -1039,6 +1041,8 @@ func setupRequiredTables() {
 		//load in van locations from database
 		if rows := selectRowsFromTable("vanlocations"); rows != nil {
 			loadVanLocationRowsIntoMemory(rows)
+			//5hr10min time difference due to server 
+			removeInactiveVanLocations(vanLocations, time.Duration(10)*time.Minute)
 		} else {
 			log.Println("Loading vanlocations table returned nil object")
 		}
