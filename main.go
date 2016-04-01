@@ -805,18 +805,27 @@ func setPickupToInactiveInMemory(targetMap *map[string]Pickup, targetPhoneNumber
 
 //anything that is not inactive is set to inactive
 func removeInactivePickups(targetMap *map[string]Pickup, timeDifference time.Duration) {
-
-	for k, v := range *targetMap {
+	//_ = k
+	for _, v := range *targetMap {
 		if v.Status != inactive && time.Since(v.LatestTime) > timeDifference { //only check active pickups
 			//delete(*targetMap, k) do not delete, because we want to preserve the pickup records
+			
+			/*
 			v.Status = inactive
-			v.devicePhrase = ""
+			*/
+			//we comment out above below and query db commands so that the device phrase is clear after a timeout, but the pickup is still there for accountability
+			//this way someone who reset theri phone or uses a new phone is get to use the same number after so many minutes
+			v.devicePhrase = "" 
+			/*
 			(*targetMap)[k] = v
+			*/
 
+			/*
 			//perform UPDATE, INSERT, DELETE in order
 			serialChannel <- func() { databaseUpdatePickupStatusInCurrentTable(v, inactive) }
 			serialChannel <- func() { databaseInsertPickupInPastTable(v) }
 			serialChannel <- func() { databaseDeletePickupInCurrentTable(v) }
+			*/
 		}
 	}
 }
@@ -854,7 +863,7 @@ func checkForInactive(wg *sync.WaitGroup) {
 	t := time.NewTicker(time.Duration(30) * time.Second)
 	for now := range t.C {
 		now = now
-		//go removeInactivePickups(&pickups, time.Duration(120)*time.Minute)
+		go removeInactivePickups(&pickups, time.Duration(5)*time.Minute)
 		go removeInactiveVanLocations(vanLocations, time.Duration(10)*time.Minute)
 	}
 	wg.Done()
