@@ -113,7 +113,13 @@ func isAsyncRequest(targetDictionary url.Values) bool {
 
 func checkMD5(password []byte) bool {
 	digest := fmt.Sprintf("%x", md5.Sum(password))
+	/*
 	if digest == "34d1f8a7e29f3f3497ec05d0c9c8e4fc" {
+		return true
+	}
+	*/
+
+	if digest == os.Getenv("SHIPMATE_PHRASE_DIGEST") {
 		return true
 	}
 	return false
@@ -745,6 +751,8 @@ func completePickup(w http.ResponseWriter, r *http.Request) {
 		if databaseDeletePickupInCurrentTable(tmp) != nil { 
 			log.Println("Deferred DELETE of completed pickup failed")
 		}
+
+		//maybe should clear device phrase for phone number at this time, will test at some point to find issues
 	}()
 }
 
