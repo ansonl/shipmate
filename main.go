@@ -635,7 +635,7 @@ func getPickupList(w http.ResponseWriter, r *http.Request) {
 
 	//check passphrase in "phrase" parameter
 	if !isDriverPhraseCorrect(r.Form) {
-		fmt.Fprintf(w, failResponse)
+		fmt.Fprintf(w, wrongPasswordResponse)
 		return
 	}
 
